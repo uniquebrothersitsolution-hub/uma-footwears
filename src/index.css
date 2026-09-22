@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-main: #F7F8FC;
+    --card-bg: #FFFFFF;
+    --primary: #6D5DFB;
+    --primary-hover: #5B4AE8;
+    --primary-soft: #EEEBFF;
+    --text-main: #1E1B4B;
+    --text-sub: #64748B;
+    --border: #E7E5EF;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #F7F8FC;
+    color: #1E1B4B;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2 {
+    font-weight: 700;
+    color: #1E1B4B;
+  }
+
+  h3, h4, h5, h6 {
+    font-weight: 600;
+    color: #1E1B4B;
+  }
+
+  p, span, div {
+    font-weight: 400;
+  }
+
+  label, button, input, select {
+    font-weight: 500;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom smooth scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F7F8FC;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* CMS Panel Card Styling */
+.cms-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E7E5EF;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px 0 rgba(30, 27, 75, 0.04), 0 1px 2px -1px rgba(30, 27, 75, 0.02);
+  transition: all 0.2s ease-in-out;
+}
+.cms-card:hover {
+  box-shadow: 0 4px 12px 0 rgba(30, 27, 75, 0.06);
+}
+
+/* Print specific stylesheet rules */
+@media print {
+  @page {
+    margin: 4mm;
+    size: auto;
+  }
+
+  html, body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide navigation, main sections, footers, buttons */
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  /* Ensure root containers do not block printing */
+  #root,
+  .min-h-screen {
+    background: transparent !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Print bill container */
+  #print-bill-root {
+    display: block !important;
+    width: 100% !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 8px !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
