@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Key, Store, Download, Upload, RefreshCw, CheckCircle2, ShieldCheck, UserCheck, HardDrive, FileSpreadsheet, Cloud, Database, ExternalLink, Check } from 'lucide-react';
+import { Settings, Key, Store, Download, Upload, RefreshCw, CheckCircle2, ShieldCheck, UserCheck, HardDrive, FileSpreadsheet, Cloud, Database, ExternalLink, Check, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { StorageService } from '../services/storage';
 import { ExcelExportModal } from './ExcelExportModal';
@@ -16,9 +16,11 @@ export const AdminSettings: React.FC = () => {
 
   const [staffUser, setStaffUser] = useState(staffAcc.username);
   const [staffPass, setStaffPass] = useState(staffAcc.password);
+  const [showStaffPass, setShowStaffPass] = useState(false);
 
   const [adminUser, setAdminUser] = useState(adminAcc.username);
   const [adminPass, setAdminPass] = useState(adminAcc.password);
+  const [showAdminPass, setShowAdminPass] = useState(false);
 
   // Shop Details Form
   const [shopName, setShopName] = useState(shopSettings.shopName);
@@ -199,13 +201,22 @@ export const AdminSettings: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Staff Password</label>
-              <input
-                type="text"
-                required
-                value={staffPass}
-                onChange={(e) => setStaffPass(e.target.value)}
-                className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#22C55E] font-mono text-xs rounded-xl p-2.5 focus:border-[#6D5DFB] focus:outline-none font-bold"
-              />
+              <div className="relative">
+                <input
+                  type={showStaffPass ? 'text' : 'password'}
+                  required
+                  value={staffPass}
+                  onChange={(e) => setStaffPass(e.target.value)}
+                  className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#22C55E] font-mono text-xs rounded-xl p-2.5 pr-10 focus:border-[#6D5DFB] focus:outline-none font-bold"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowStaffPass(!showStaffPass)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#1E1B4B] p-1"
+                >
+                  {showStaffPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
 
             <button
@@ -243,13 +254,22 @@ export const AdminSettings: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Admin Password</label>
-              <input
-                type="text"
-                required
-                value={adminPass}
-                onChange={(e) => setAdminPass(e.target.value)}
-                className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#F59E0B] font-mono text-xs rounded-xl p-2.5 focus:border-[#6D5DFB] focus:outline-none font-bold"
-              />
+              <div className="relative">
+                <input
+                  type={showAdminPass ? 'text' : 'password'}
+                  required
+                  value={adminPass}
+                  onChange={(e) => setAdminPass(e.target.value)}
+                  className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#F59E0B] font-mono text-xs rounded-xl p-2.5 pr-10 focus:border-[#6D5DFB] focus:outline-none font-bold"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPass(!showAdminPass)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#1E1B4B] p-1"
+                >
+                  {showAdminPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
 
             <button

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Footprints, ShieldCheck, UserCheck, Key, User, ArrowRight, Sparkles } from 'lucide-react';
+import { Footprints, ShieldCheck, UserCheck, Key, User, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
 
@@ -7,28 +7,29 @@ export const LoginModal: React.FC = () => {
   const { login, shopSettings } = useAuth();
 
   const [selectedRole, setSelectedRole] = useState<UserRole>('staff');
-  const [usernameInput, setUsernameInput] = useState<string>('staff');
-  const [passwordInput, setPasswordInput] = useState<string>('123');
+  const [usernameInput, setUsernameInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMessage('');
-    if (role === 'admin') {
-      setUsernameInput('admin');
-      setPasswordInput('123');
-    } else {
-      setUsernameInput('staff');
-      setPasswordInput('123');
-    }
+    setUsernameInput('');
+    setPasswordInput('');
   };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-    const res = login(selectedRole, usernameInput, passwordInput);
+    if (!usernameInput.trim() || !passwordInput.trim()) {
+      setErrorMessage('Please enter both username and password.');
+      return;
+    }
+
+    const res = login(selectedRole, usernameInput.trim(), passwordInput.trim());
     if (!res.success) {
-      setErrorMessage(res.message || 'Login failed.');
+      setErrorMessage(res.message || 'Login failed. Please check your credentials.');
     }
   };
 
@@ -94,9 +95,10 @@ export const LoginModal: React.FC = () => {
             <input
               type="text"
               required
+              autoFocus
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
-              placeholder="Enter username"
+              placeholder={`Enter ${selectedRole} username`}
               className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] focus:border-[#6D5DFB] focus:outline-none rounded-xl px-4 py-3 text-sm font-medium transition"
             />
           </div>
@@ -106,14 +108,24 @@ export const LoginModal: React.FC = () => {
               <Key className="w-3.5 h-3.5 text-[#6D5DFB]" />
               <span>Password</span>
             </label>
-            <input
-              type="password"
-              required
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Enter password"
-              className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] focus:border-[#6D5DFB] focus:outline-none rounded-xl px-4 py-3 text-sm font-medium transition"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="Enter password"
+                className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] focus:border-[#6D5DFB] focus:outline-none rounded-xl pl-4 pr-11 py-3 text-sm font-medium transition"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#1E1B4B] p-1.5 rounded-lg hover:bg-[#EEEBFF]/50 transition"
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           <button
@@ -124,28 +136,6 @@ export const LoginModal: React.FC = () => {
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
-
-        {/* Quick Demo Credentials Footer */}
-        <div className="pt-4 border-t border-[#E7E5EF] text-center space-y-2">
-          <p className="text-[11px] text-[#64748B] font-semibold flex items-center justify-center space-x-1">
-            <Sparkles className="w-3 h-3 text-[#F59E0B]" />
-            <span>Default Test Credentials</span>
-          </p>
-          <div className="flex justify-center space-x-3 text-xs font-mono">
-            <button
-              onClick={() => handleRoleChange('staff')}
-              className="px-2.5 py-1 bg-[#F7F8FC] border border-[#E7E5EF] rounded-lg text-[#22C55E] hover:bg-emerald-50 font-bold"
-            >
-              Staff: staff / 123
-            </button>
-            <button
-              onClick={() => handleRoleChange('admin')}
-              className="px-2.5 py-1 bg-[#F7F8FC] border border-[#E7E5EF] rounded-lg text-[#F59E0B] hover:bg-amber-50 font-bold"
-            >
-              Admin: admin / 123
-            </button>
-          </div>
-        </div>
 
       </div>
     </div>
