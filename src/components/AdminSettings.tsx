@@ -11,8 +11,8 @@ export const AdminSettings: React.FC = () => {
 
   // User Credential Forms
   const accounts = StorageService.getAccounts();
-  const staffAcc = accounts.find(a => a.role === 'staff') || { username: 'staff', password: '123' };
-  const adminAcc = accounts.find(a => a.role === 'admin') || { username: 'admin', password: '123' };
+  const staffAcc = accounts.find(a => a.role === 'staff' && a.username !== 'uma') || { username: 'staff', password: '123' };
+  const adminAcc = accounts.find(a => a.role === 'admin' && a.username !== 'uma') || { username: 'admin', password: '123' };
 
   const [staffUser, setStaffUser] = useState(staffAcc.username);
   const [staffPass, setStaffPass] = useState(staffAcc.password);

@@ -112,7 +112,9 @@ const INITIAL_PRODUCTS: Product[] = [
 
 const INITIAL_ACCOUNTS: UserAccount[] = [
   { role: 'admin', username: 'admin', password: '123' },
-  { role: 'staff', username: 'staff', password: '123' }
+  { role: 'staff', username: 'staff', password: '123' },
+  { role: 'admin', username: 'uma', password: 'uma123' },
+  { role: 'staff', username: 'uma', password: 'uma123' }
 ];
 
 const INITIAL_SETTINGS: ShopSettings = {
@@ -349,7 +351,20 @@ export const StorageService = {
       return INITIAL_ACCOUNTS;
     }
     try {
-      return JSON.parse(data);
+      const parsed: UserAccount[] = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        const hasUmaAdmin = parsed.some(a => a.role === 'admin' && a.username.toLowerCase() === 'uma');
+        const hasUmaStaff = parsed.some(a => a.role === 'staff' && a.username.toLowerCase() === 'uma');
+        if (!hasUmaAdmin || !hasUmaStaff) {
+          const merged = [...parsed];
+          if (!hasUmaAdmin) merged.push({ role: 'admin', username: 'uma', password: 'uma123' });
+          if (!hasUmaStaff) merged.push({ role: 'staff', username: 'uma', password: 'uma123' });
+          localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
+          return merged;
+        }
+        return parsed;
+      }
+      return INITIAL_ACCOUNTS;
     } catch {
       return INITIAL_ACCOUNTS;
     }
@@ -358,7 +373,7 @@ export const StorageService = {
   updateAccountCredentials(role: 'admin' | 'staff', newUsername: string, newPassword: string): void {
     const accounts = this.getAccounts();
     const updated = accounts.map(acc => {
-      if (acc.role === role) {
+      if (acc.role === role && acc.username !== 'uma') {
         return { ...acc, username: newUsername, password: newPassword };
       }
       return acc;
