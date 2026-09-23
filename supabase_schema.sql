@@ -17,9 +17,13 @@ create table if not exists public.products (
   discount_percent numeric(5,2) not null default 0,
   stock integer not null default 0,
   colors jsonb not null default '[]'::jsonb,
+  sizes jsonb not null default '["6","7","8","9","10","11"]'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- Safe migration if products table already exists
+alter table public.products add column if not exists sizes jsonb not null default '["6","7","8","9","10","11"]'::jsonb;
 
 -- 3. SALES TRANSACTIONS TABLE
 create table if not exists public.sales_transactions (
@@ -45,6 +49,7 @@ create table if not exists public.transaction_items (
   product_name text not null,
   product_code text not null,
   color text not null default '',
+  size text not null default '',
   quantity integer not null check (quantity > 0),
   price numeric(10,2) not null,
   discounted_price numeric(10,2) not null,
@@ -52,6 +57,9 @@ create table if not exists public.transaction_items (
   wholesale_price numeric(10,2) not null default 0,
   created_at timestamptz default now()
 );
+
+-- Safe migration if transaction_items table already exists
+alter table public.transaction_items add column if not exists size text not null default '';
 
 -- 5. SHOP SETTINGS TABLE
 create table if not exists public.shop_settings (
@@ -107,15 +115,15 @@ begin
 
   -- 2. Insert items and decrement stock atomically
   for item in select * from jsonb_to_recordset(p_items) as x(
-    productId uuid, productName text, productCode text, color text,
+    productId uuid, productName text, productCode text, color text, size text,
     quantity int, price numeric, discountedPrice numeric, totalPrice numeric, wholesalePrice numeric
   ) loop
     insert into public.transaction_items (
       transaction_id, product_id, product_name, product_code,
-      color, quantity, price, discounted_price, total_price, wholesale_price
+      color, size, quantity, price, discounted_price, total_price, wholesale_price
     ) values (
       v_tx_id, item.productId, item.productName, item.productCode,
-      item.color, item.quantity, item.price, item.discountedPrice, item.totalPrice, coalesce(item.wholesalePrice, 0)
+      coalesce(item.color, ''), coalesce(item.size, ''), item.quantity, item.price, item.discountedPrice, item.totalPrice, coalesce(item.wholesalePrice, 0)
     );
 
     if item.productId is not null then
@@ -131,40 +139,46 @@ end;
 $$ language plpgsql security definer;
 
 -- 7. INITIAL FOOTWEAR CATALOG SEEDING (Only if table is empty)
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-SP-01', 'Air Sprint Sports Running Shoes', 'Sports', 1899, 1150, 10, 45,
-  '[{"name": "Black/Red", "hex": "#ef4444"}, {"name": "Navy Blue", "hex": "#1e3a8a"}, {"name": "All Black", "hex": "#09090b"}, {"name": "Grey/Neon", "hex": "#84cc16"}]'::jsonb
+  '[{"name": "Black/Red", "hex": "#ef4444"}, {"name": "Navy Blue", "hex": "#1e3a8a"}, {"name": "All Black", "hex": "#09090b"}, {"name": "Grey/Neon", "hex": "#84cc16"}]'::jsonb,
+  '["6", "7", "8", "9", "10", "11"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-SP-01');
 
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-FM-02', 'Classic Genuine Leather Oxford', 'Formal', 2499, 1550, 15, 30,
-  '[{"name": "Tan Brown", "hex": "#78350f"}, {"name": "Jet Black", "hex": "#18181b"}, {"name": "Cherry Wood", "hex": "#451a03"}]'::jsonb
+  '[{"name": "Tan Brown", "hex": "#78350f"}, {"name": "Jet Black", "hex": "#18181b"}, {"name": "Cherry Wood", "hex": "#451a03"}]'::jsonb,
+  '["6", "7", "8", "9", "10", "11"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-FM-02');
 
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-SN-03', 'Urban Street Canvas Sneakers', 'Casual', 1299, 780, 10, 60,
-  '[{"name": "Pure White", "hex": "#f8fafc"}, {"name": "Olive Green", "hex": "#3f6212"}, {"name": "Midnight Black", "hex": "#0f172a"}]'::jsonb
+  '[{"name": "Pure White", "hex": "#f8fafc"}, {"name": "Olive Green", "hex": "#3f6212"}, {"name": "Midnight Black", "hex": "#0f172a"}]'::jsonb,
+  '["6", "7", "8", "9", "10"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-SN-03');
 
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-SD-04', 'Comfort Grip Leather Sandals', 'Sandals', 999, 580, 5, 50,
-  '[{"name": "Dark Brown", "hex": "#582f0e"}, {"name": "Tan", "hex": "#9a7b56"}, {"name": "Black", "hex": "#18181b"}]'::jsonb
+  '[{"name": "Dark Brown", "hex": "#582f0e"}, {"name": "Tan", "hex": "#9a7b56"}, {"name": "Black", "hex": "#18181b"}]'::jsonb,
+  '["6", "7", "8", "9", "10"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-SD-04');
 
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-FF-05', 'Soft Cushion Daily Flip Flops', 'Slippers', 399, 210, 0, 100,
-  '[{"name": "Royal Blue", "hex": "#2563eb"}, {"name": "Teal", "hex": "#0d9488"}, {"name": "Graphite Grey", "hex": "#4b5563"}]'::jsonb
+  '[{"name": "Royal Blue", "hex": "#2563eb"}, {"name": "Teal", "hex": "#0d9488"}, {"name": "Graphite Grey", "hex": "#4b5563"}]'::jsonb,
+  '["5", "6", "7", "8", "9", "10"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-FF-05');
 
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors)
+insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
 select 
   'UMA-HL-06', 'Elegance Block Heel Pumps', 'Women', 1599, 920, 12, 35,
-  '[{"name": "Rose Gold", "hex": "#fb7185"}, {"name": "Metallic Silver", "hex": "#cbd5e1"}, {"name": "Matte Black", "hex": "#27272a"}]'::jsonb
+  '[{"name": "Rose Gold", "hex": "#fb7185"}, {"name": "Metallic Silver", "hex": "#cbd5e1"}, {"name": "Matte Black", "hex": "#27272a"}]'::jsonb,
+  '["4", "5", "6", "7", "8"]'::jsonb
 where not exists (select 1 from public.products where code = 'UMA-HL-06');
 
 -- 8. ROW LEVEL SECURITY (RLS) POLICIES

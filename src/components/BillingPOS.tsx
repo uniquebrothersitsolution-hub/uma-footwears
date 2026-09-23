@@ -37,9 +37,18 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [splitUpiAmount, setSplitUpiAmount] = useState<number | ''>('');
   const [saleSuccessMessage, setSaleSuccessMessage] = useState<string>('');
 
-  // Load products on mount
+  // Load products on mount & subscribe to realtime stock updates across devices
   useEffect(() => {
     setProducts(StorageService.getProducts());
+    StorageService.fetchProductsFromCloud().then(prods => setProducts(prods)).catch(() => {});
+
+    const unsubscribe = StorageService.onDataChange(() => {
+      setProducts(StorageService.getProducts());
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // When Product Selection Changes

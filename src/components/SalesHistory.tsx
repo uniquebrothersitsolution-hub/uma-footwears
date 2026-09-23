@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { History, Search, Printer, Trash2, Calendar, DollarSign, TrendingUp, ShoppingBag, FileSpreadsheet } from 'lucide-react';
+import { History, Search, Printer, Trash2, Calendar, DollarSign, TrendingUp, ShoppingBag, FileSpreadsheet, RefreshCw, Cloud } from 'lucide-react';
 import { SaleTransaction } from '../types';
 import { StorageService } from '../services/storage';
+import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { ExcelExportModal } from './ExcelExportModal';
 
@@ -11,13 +12,34 @@ interface SalesHistoryProps {
 
 export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
   const { userRole } = useAuth();
-  const [transactions, setTransactions] = useState<SaleTransaction[]>([]);
+  const [transactions, setTransactions] = useState<SaleTransaction[]>(() => StorageService.getTransactions());
   const [searchQuery, setSearchQuery] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const loadTransactions = async () => {
+    // Show cached immediately
+    setTransactions(StorageService.getTransactions());
+    if (isSupabaseConfigured()) {
+      setIsSyncing(true);
+      const cloudTxs = await StorageService.fetchTransactionsFromCloud();
+      setTransactions(cloudTxs);
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
-    setTransactions(StorageService.getTransactions());
+    loadTransactions();
+
+    // Auto-update whenever local or remote transactions change
+    const unsubscribe = StorageService.onDataChange(() => {
+      setTransactions(StorageService.getTransactions());
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const handleDeleteTransaction = (id: string) => {
@@ -90,6 +112,17 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
               </button>
             ))}
           </div>
+
+          {/* Refresh / Cloud Sync Button */}
+          <button
+            onClick={loadTransactions}
+            disabled={isSyncing}
+            className="py-2 px-3 bg-[#EEEBFF] hover:bg-[#6D5DFB] hover:text-white text-[#6D5DFB] text-xs font-semibold rounded-xl border border-[#E7E5EF] flex items-center space-x-1.5 transition disabled:opacity-50 whitespace-nowrap"
+            title="Refresh and pull all sales from Cloud database"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? 'Syncing...' : 'Sync'}</span>
+          </button>
 
           {/* Admin Export to Excel */}
           {userRole === 'admin' && (

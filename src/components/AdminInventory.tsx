@@ -1,27 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Plus, Edit2, Trash2, Search, DollarSign, Tag, Check, X, ShieldAlert, Sparkles, AlertTriangle } from 'lucide-react';
+import { Package, Plus, Edit2, Trash2, Search, DollarSign, Tag, Check, X, ShieldAlert, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Product, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
+import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 
 export const AdminInventory: React.FC = () => {
   const { userRole } = useAuth();
 
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Add / Edit Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
-  // Form Fields
+  // Form inputs
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Sports');
-  const [price, setPrice] = useState<number | ''>('');
-  const [wholesalePrice, setWholesalePrice] = useState<number | ''>('');
-  const [discountPercent, setDiscountPercent] = useState<number | ''>(0);
+  const [price, setPrice] = useState<number | ''>(1000);
+  const [wholesalePrice, setWholesalePrice] = useState<number | ''>(600);
+  const [discountPercent, setDiscountPercent] = useState<number | ''>(10);
   const [stock, setStock] = useState<number | ''>(10);
   const [sizes, setSizes] = useState<string[]>(['6', '7', '8', '9', '10', '11']);
   const [newSizeInput, setNewSizeInput] = useState('');
@@ -29,8 +31,26 @@ export const AdminInventory: React.FC = () => {
   const [newColorName, setNewColorName] = useState('');
   const [newColorHex, setNewColorHex] = useState('#3b82f6');
 
-  useEffect(() => {
+  const loadProducts = async () => {
     setProducts(StorageService.getProducts());
+    if (isSupabaseConfigured()) {
+      setIsSyncing(true);
+      const cloudProds = await StorageService.fetchProductsFromCloud();
+      setProducts(cloudProds);
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProducts();
+
+    const unsubscribe = StorageService.onDataChange(() => {
+      setProducts(StorageService.getProducts());
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const openAddModal = () => {
@@ -166,6 +186,17 @@ export const AdminInventory: React.FC = () => {
               className="bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-xl pl-9 pr-4 py-2.5 w-64 focus:outline-none focus:border-[#6D5DFB] font-medium transition"
             />
           </div>
+
+          {/* Sync Button */}
+          <button
+            onClick={loadProducts}
+            disabled={isSyncing}
+            className="py-2.5 px-3 bg-[#EEEBFF] hover:bg-[#6D5DFB] hover:text-white text-[#6D5DFB] text-xs font-semibold rounded-xl border border-[#E7E5EF] flex items-center space-x-1.5 transition disabled:opacity-50 whitespace-nowrap"
+            title="Refresh and sync products from Cloud database"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? 'Syncing...' : 'Sync'}</span>
+          </button>
 
           {/* Add Product Button (Admin Only) */}
           {userRole === 'admin' && (

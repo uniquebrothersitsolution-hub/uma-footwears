@@ -9,16 +9,42 @@ import { LoginModal } from './components/LoginModal';
 import { PrintBillModal } from './components/PrintBillModal';
 import { SaleTransaction } from './types';
 import { StorageService } from './services/storage';
+import { subscribeToRealtimeChanges } from './services/supabaseClient';
 
 export const App: React.FC = () => {
   const { userRole } = useAuth();
   const [activeTab, setActiveTab] = useState<'pos' | 'inventory' | 'history' | 'settings'>('pos');
   const [printingTransaction, setPrintingTransaction] = useState<SaleTransaction | null>(null);
 
-  // Sync latest inventory and settings from Supabase Cloud on mount
+  // Sync latest inventory, bills, and settings from Supabase Cloud on mount & realtime updates
   useEffect(() => {
+    // Initial sync
     StorageService.syncWithCloud().catch(err => console.log('Initial cloud sync notice:', err));
+
+    // Realtime subscription across all devices
+    const unsubscribeRealtime = subscribeToRealtimeChanges((table) => {
+      console.log(`Live change detected on ${table}, auto-syncing...`);
+      StorageService.syncWithCloud().catch(err => console.error('Realtime sync error:', err));
+    });
+
+    // Auto-sync when window gains focus (e.g. user returns to this browser tab)
+    const handleFocus = () => {
+      StorageService.syncWithCloud().catch(() => {});
+    };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      unsubscribeRealtime();
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
+
+  // When a user logs in, pull the latest cloud entries immediately
+  useEffect(() => {
+    if (userRole) {
+      StorageService.syncWithCloud().catch(err => console.log('Login cloud sync notice:', err));
+    }
+  }, [userRole]);
 
   if (!userRole) {
     return <LoginModal />;

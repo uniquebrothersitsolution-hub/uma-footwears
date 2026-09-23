@@ -73,13 +73,18 @@ export const AdminSettings: React.FC = () => {
     showNotification('Shop details and bill header updated!');
   };
 
-  const handleSaveSupabase = (e: React.FormEvent) => {
+  const handleSaveSupabase = async (e: React.FormEvent) => {
     e.preventDefault();
     saveSupabaseConfig(supabaseUrl.trim(), supabaseKey.trim());
     showNotification('Supabase configuration saved!');
-    StorageService.syncWithCloud().then((synced) => {
-      if (synced) showNotification('Synced latest data from Supabase Cloud!');
-    });
+    setIsSyncingCloud(true);
+    const synced = await StorageService.syncWithCloud();
+    setIsSyncingCloud(false);
+    if (synced) {
+      showNotification('Successfully synced all products and sales from Supabase Cloud!');
+    } else {
+      showNotification('Saved, but could not connect to Cloud. Check credentials.', 'error');
+    }
   };
 
   const handleTestCloud = async () => {
@@ -97,12 +102,24 @@ export const AdminSettings: React.FC = () => {
   const handleSyncToCloud = async () => {
     setIsSyncingCloud(true);
     saveSupabaseConfig(supabaseUrl.trim(), supabaseKey.trim());
-    const res = await SupabaseStorageService.migrateLocalDataToSupabase();
+    const res = await StorageService.pushLocalDataToCloud();
     setIsSyncingCloud(false);
     if (res.success) {
       showNotification(res.message);
     } else {
       showNotification(res.message, 'error');
+    }
+  };
+
+  const handlePullFromCloud = async () => {
+    setIsSyncingCloud(true);
+    saveSupabaseConfig(supabaseUrl.trim(), supabaseKey.trim());
+    const ok = await StorageService.syncWithCloud();
+    setIsSyncingCloud(false);
+    if (ok) {
+      showNotification('Synchronized all products, sales history, and settings from Cloud!');
+    } else {
+      showNotification('Failed to sync from Cloud. Please verify connection credentials.', 'error');
     }
   };
   const handleExportDB = () => {
@@ -458,11 +475,22 @@ export const AdminSettings: React.FC = () => {
 
             <button
               type="button"
+              onClick={handlePullFromCloud}
+              disabled={isSyncingCloud || !supabaseUrl}
+              className="py-2.5 px-4 bg-indigo-50 hover:bg-indigo-100 text-[#6D5DFB] border border-indigo-200 font-semibold text-xs rounded-xl transition disabled:opacity-50 flex items-center space-x-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+              <span>{isSyncingCloud ? 'Syncing...' : 'Pull All Data from Cloud'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleSyncToCloud}
               disabled={isSyncingCloud || !supabaseUrl}
-              className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-[#22C55E] border border-emerald-200 font-semibold text-xs rounded-xl transition disabled:opacity-50"
+              className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-[#22C55E] border border-emerald-200 font-semibold text-xs rounded-xl transition disabled:opacity-50 flex items-center space-x-1.5"
             >
-              {isSyncingCloud ? 'Syncing...' : 'Upload Local Products & Settings to Cloud'}
+              <Upload className="w-3.5 h-3.5" />
+              <span>{isSyncingCloud ? 'Uploading...' : 'Upload Local Entries to Cloud'}</span>
             </button>
           </div>
         </form>

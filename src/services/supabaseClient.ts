@@ -28,6 +28,9 @@ export const saveSupabaseConfig = (url: string, key: string): void => {
 
   if (key) localStorage.setItem(STORAGE_KEY_KEY, key.trim());
   else localStorage.removeItem(STORAGE_KEY_KEY);
+
+  // Invalidate instance so it reconnects with new credentials
+  supabaseInstance = null;
 };
 
 // Singleton Client Instance
@@ -74,4 +77,45 @@ export const testSupabaseConnection = async (): Promise<{ success: boolean; mess
   } catch (err: any) {
     return { success: false, message: err.message || 'Connection test failed.' };
   }
+};
+
+/**
+ * Subscribe to real-time database changes across all tables so multiple logged-in systems
+ * stay instantly in sync without needing to refresh the page.
+ */
+export const subscribeToRealtimeChanges = (onUpdate: (table: string) => void): (() => void) => {
+  const client = getSupabaseClient();
+  if (!client) return () => {};
+
+  const channel = client
+    .channel('uma-realtime-channel')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sales_transactions' },
+      () => onUpdate('sales_transactions')
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'transaction_items' },
+      () => onUpdate('transaction_items')
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'products' },
+      () => onUpdate('products')
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'shop_settings' },
+      () => onUpdate('shop_settings')
+    )
+    .subscribe();
+
+  return () => {
+    try {
+      client.removeChannel(channel);
+    } catch (e) {
+      console.warn('Error removing channel:', e);
+    }
+  };
 };
