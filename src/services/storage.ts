@@ -15,6 +15,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-SP-01',
     name: 'Air Sprint Sports Running Shoes',
     category: 'Sports',
+    sizes: ['6', '7', '8', '9', '10', '11'],
     colors: [
       { name: 'Black/Red', hex: '#ef4444' },
       { name: 'Navy Blue', hex: '#1e3a8a' },
@@ -31,6 +32,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-FM-02',
     name: 'Classic Genuine Leather Oxford',
     category: 'Formal',
+    sizes: ['6', '7', '8', '9', '10', '11'],
     colors: [
       { name: 'Tan Brown', hex: '#78350f' },
       { name: 'Jet Black', hex: '#18181b' },
@@ -46,6 +48,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-SN-03',
     name: 'Urban Street Canvas Sneakers',
     category: 'Casual',
+    sizes: ['6', '7', '8', '9', '10'],
     colors: [
       { name: 'Pure White', hex: '#f8fafc' },
       { name: 'Olive Green', hex: '#3f6212' },
@@ -61,6 +64,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-SD-04',
     name: 'Comfort Grip Leather Sandals',
     category: 'Sandals',
+    sizes: ['6', '7', '8', '9', '10'],
     colors: [
       { name: 'Dark Brown', hex: '#582f0e' },
       { name: 'Tan', hex: '#9a7b56' },
@@ -76,6 +80,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-FF-05',
     name: 'Soft Cushion Daily Flip Flops',
     category: 'Slippers',
+    sizes: ['5', '6', '7', '8', '9', '10'],
     colors: [
       { name: 'Royal Blue', hex: '#2563eb' },
       { name: 'Teal', hex: '#0d9488' },
@@ -92,6 +97,7 @@ const INITIAL_PRODUCTS: Product[] = [
     code: 'UMA-WM-06',
     name: 'Elegance Heeled Ethnic Sandals',
     category: 'Womens',
+    sizes: ['4', '5', '6', '7', '8'],
     colors: [
       { name: 'Rose Gold', hex: '#fb7185' },
       { name: 'Metallic Silver', hex: '#cbd5e1' },
@@ -127,7 +133,14 @@ export const StorageService = {
       return INITIAL_PRODUCTS;
     }
     try {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        return parsed.map((p: Product) => ({
+          ...p,
+          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['6', '7', '8', '9', '10', '11']
+        }));
+      }
+      return INITIAL_PRODUCTS;
     } catch {
       return INITIAL_PRODUCTS;
     }

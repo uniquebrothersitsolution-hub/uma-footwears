@@ -218,7 +218,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                     {/* Items Summary */}
                     <td className="py-3.5 px-4 max-w-xs">
                       <div className="text-[#1E1B4B] font-medium">
-                        {tx.items.map(i => `${i.productName} (${i.color}) x${i.quantity}`).join(', ')}
+                        {tx.items.map(i => `${i.productName} (${i.size || i.color ? `Size: ${i.size || i.color}` : ''}) x${i.quantity}`).join(', ')}
                       </div>
                     </td>
 

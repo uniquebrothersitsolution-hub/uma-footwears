@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Palette, Sparkles, RefreshCw, Layers } from 'lucide-react';
+import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers } from 'lucide-react';
 import { Product, BillItem, SaleTransaction, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
 import { useAuth } from '../context/AuthContext';
+
+const DEFAULT_SIZES = ['6', '7', '8', '9', '10', '11'];
 
 interface BillingPOSProps {
   onPrintBill: (transaction: SaleTransaction) => void;
@@ -15,9 +17,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [productNameInput, setProductNameInput] = useState<string>('');
   
-  // Available colors for current selection
-  const [availableColors, setAvailableColors] = useState<ProductColor[]>([]);
-  const [selectedColor, setSelectedColor] = useState<string>('');
+  // Available sizes for current selection
+  const [availableSizes, setAvailableSizes] = useState<string[]>(DEFAULT_SIZES);
+  const [selectedSize, setSelectedSize] = useState<string>('');
   
   // Pricing & calculation states
   const [basePrice, setBasePrice] = useState<number | ''>('');
@@ -46,8 +48,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     const prod = products.find(p => p.id === prodId);
     if (prod) {
       setProductNameInput(prod.name);
-      setAvailableColors(prod.colors || []);
-      setSelectedColor(prod.colors && prod.colors.length > 0 ? prod.colors[0].name : '');
+      const sizes = prod.sizes && prod.sizes.length > 0 ? prod.sizes : DEFAULT_SIZES;
+      setAvailableSizes(sizes);
+      setSelectedSize('');
       setBasePrice(prod.price);
       setWholesalePrice(prod.wholesalePrice || 0);
       setDiscountPercent(prod.discountPercent || 0);
@@ -93,11 +96,13 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       ? wholesalePrice
       : (prod?.wholesalePrice || Math.round(basePrice * 0.6));
 
+    const chosenSize = selectedSize.trim() || 'Standard';
     const newItem: BillItem = {
       id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       productId: selectedProductId || 'custom-' + Date.now(),
       productName: productNameInput.trim(),
-      color: selectedColor || 'Standard',
+      size: chosenSize,
+      color: chosenSize,
       price: basePrice,
       wholesalePrice: itemWholesale,
       discountPercent: typeof discountPercent === 'number' ? discountPercent : 0,
@@ -111,8 +116,8 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     // Reset Form
     setSelectedProductId('');
     setProductNameInput('');
-    setAvailableColors([]);
-    setSelectedColor('');
+    setAvailableSizes(DEFAULT_SIZES);
+    setSelectedSize('');
     setBasePrice('');
     setWholesalePrice('');
     setDiscountPercent(0);
@@ -245,52 +250,50 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                 </div>
               </div>
 
-              {/* Color Options Suggestion */}
+              {/* Size Options */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-[#1E1B4B] uppercase tracking-wider flex items-center space-x-1.5">
-                    <Palette className="w-3.5 h-3.5 text-[#6D5DFB]" />
-                    <span>Color Option</span>
+                    <Ruler className="w-3.5 h-3.5 text-[#6D5DFB]" />
+                    <span>Size Option</span>
                   </label>
-                  {availableColors.length > 0 && (
+                  {selectedSize ? (
                     <span className="text-[11px] text-[#6D5DFB] font-semibold">
-                      {availableColors.length} Color(s) Available
+                      Selected: Size {selectedSize}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-[#64748B]">
+                      {availableSizes.length} Size(s) Available
                     </span>
                   )}
                 </div>
 
-                {availableColors.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 p-2 bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl">
-                    {availableColors.map((col, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setSelectedColor(col.name)}
-                        className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                          selectedColor === col.name
-                            ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
-                            : 'bg-white text-[#1E1B4B] hover:bg-[#EEEBFF] border border-[#E7E5EF]'
-                        }`}
-                      >
-                        {col.hex && (
-                          <span
-                            className="w-3 h-3 rounded-full border border-black/20"
-                            style={{ backgroundColor: col.hex }}
-                          />
-                        )}
-                        <span>{col.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="Enter color (e.g. Black, Brown, Blue)"
-                    value={selectedColor}
-                    onChange={(e) => setSelectedColor(e.target.value)}
-                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
-                  />
-                )}
+                {/* Quick Size Selector Buttons */}
+                <div className="flex flex-wrap items-center gap-2 p-2 bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl">
+                  {availableSizes.map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => setSelectedSize(selectedSize === sz ? '' : sz)}
+                      className={`min-w-[40px] px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        selectedSize === sz
+                          ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
+                          : 'bg-white text-[#1E1B4B] hover:bg-[#EEEBFF] border border-[#E7E5EF]'
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom / Direct Size Input */}
+                <input
+                  type="text"
+                  placeholder="Enter size (e.g. 6, 7, 8, 9, 10, 11)"
+                  value={selectedSize}
+                  onChange={(e) => setSelectedSize(e.target.value)}
+                  className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
+                />
               </div>
 
               {/* Price & Discount Auto-Calculations Row */}
@@ -490,7 +493,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                         <div className="text-xs font-bold text-[#1E1B4B] truncate">{item.productName}</div>
                         <div className="flex items-center space-x-2 text-[11px] text-[#64748B]">
                           <span className="px-1.5 py-0.5 bg-white border border-[#E7E5EF] rounded text-[#1E1B4B] font-semibold">
-                            {item.color}
+                            Size: {item.size || item.color}
                           </span>
                           <span>Qty: {item.quantity}</span>
                         </div>

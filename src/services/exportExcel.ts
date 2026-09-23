@@ -60,7 +60,7 @@ export const ExportExcelService = {
 
       const totalQty = tx.items.reduce((sum, item) => sum + item.quantity, 0);
       const itemsSummary = tx.items
-        .map((item) => `${item.productName} (${item.color}) x${item.quantity}`)
+        .map((item) => `${item.productName} (${item.size || item.color ? `Size: ${item.size || item.color}` : ''}) x${item.quantity}`)
         .join('; ');
 
       const wholesaleCost = tx.items.reduce((sum, item) => sum + (item.wholesalePrice || 0) * item.quantity, 0);

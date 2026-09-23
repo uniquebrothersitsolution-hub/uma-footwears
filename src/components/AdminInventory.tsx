@@ -23,6 +23,8 @@ export const AdminInventory: React.FC = () => {
   const [wholesalePrice, setWholesalePrice] = useState<number | ''>('');
   const [discountPercent, setDiscountPercent] = useState<number | ''>(0);
   const [stock, setStock] = useState<number | ''>(10);
+  const [sizes, setSizes] = useState<string[]>(['6', '7', '8', '9', '10', '11']);
+  const [newSizeInput, setNewSizeInput] = useState('');
   const [colors, setColors] = useState<ProductColor[]>([{ name: 'Black', hex: '#000000' }]);
   const [newColorName, setNewColorName] = useState('');
   const [newColorHex, setNewColorHex] = useState('#3b82f6');
@@ -40,6 +42,8 @@ export const AdminInventory: React.FC = () => {
     setWholesalePrice('');
     setDiscountPercent(0);
     setStock(20);
+    setSizes(['6', '7', '8', '9', '10', '11']);
+    setNewSizeInput('');
     setColors([{ name: 'Black', hex: '#000000' }, { name: 'Brown', hex: '#78350f' }]);
     setIsModalOpen(true);
   };
@@ -53,8 +57,26 @@ export const AdminInventory: React.FC = () => {
     setWholesalePrice(product.wholesalePrice || 0);
     setDiscountPercent(product.discountPercent || 0);
     setStock(product.stock);
+    setSizes(product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']);
+    setNewSizeInput('');
     setColors(product.colors || []);
     setIsModalOpen(true);
+  };
+
+  const handleToggleSize = (sz: string) => {
+    setSizes(prev => prev.includes(sz) ? prev.filter(s => s !== sz) : [...prev, sz].sort((a, b) => Number(a) - Number(b)));
+  };
+
+  const handleAddCustomSize = () => {
+    const trimmed = newSizeInput.trim();
+    if (trimmed && !sizes.includes(trimmed)) {
+      setSizes(prev => [...prev, trimmed]);
+      setNewSizeInput('');
+    }
+  };
+
+  const handleRemoveSize = (sz: string) => {
+    setSizes(prev => prev.filter(s => s !== sz));
   };
 
   const handleAddColor = () => {
@@ -76,6 +98,7 @@ export const AdminInventory: React.FC = () => {
       code: code || 'UMA-GEN',
       name: name.trim(),
       category: category || 'Footwear',
+      sizes: sizes.length > 0 ? sizes : ['6', '7', '8', '9', '10', '11'],
       colors: colors.length > 0 ? colors : [{ name: 'Standard' }],
       price: price,
       wholesalePrice: typeof wholesalePrice === 'number' ? wholesalePrice : Math.round(price * 0.6),
@@ -105,7 +128,8 @@ export const AdminInventory: React.FC = () => {
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          p.colors.some(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
+                          p.colors?.some(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                          p.sizes?.some(s => s.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesCategory = categoryFilter === 'All' || p.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
@@ -182,7 +206,7 @@ export const AdminInventory: React.FC = () => {
               <tr>
                 <th className="py-3.5 px-4">Code / Item</th>
                 <th className="py-3.5 px-4">Category</th>
-                <th className="py-3.5 px-4">Colors Available</th>
+                <th className="py-3.5 px-4">Sizes & Colors</th>
                 <th className="py-3.5 px-4">Retail MRP</th>
                 <th className="py-3.5 px-4">Default Disc %</th>
                 
@@ -224,10 +248,22 @@ export const AdminInventory: React.FC = () => {
                       </span>
                     </td>
 
-                    {/* Colors */}
+                    {/* Sizes & Colors */}
                     <td className="py-3.5 px-4">
+                      {product.sizes && product.sizes.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                          {product.sizes.map((s, idx) => (
+                            <span
+                              key={idx}
+                              className="px-1.5 py-0.5 bg-[#EEEBFF] text-[#6D5DFB] border border-[#E7E5EF] rounded font-bold text-[10px]"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className="flex flex-wrap gap-1.5">
-                        {product.colors.map((col, idx) => (
+                        {product.colors?.map((col, idx) => (
                           <span
                             key={idx}
                             className="inline-flex items-center space-x-1 px-2 py-0.5 bg-[#F7F8FC] border border-[#E7E5EF] rounded-md text-[10px] text-[#1E1B4B] font-medium"
@@ -374,6 +410,53 @@ export const AdminInventory: React.FC = () => {
                   placeholder="e.g. Air Cushion Running Shoes"
                   className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-xl p-2.5 font-medium focus:outline-none focus:border-[#6D5DFB]"
                 />
+              </div>
+
+              {/* Sizes Selector */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-[#1E1B4B] uppercase">Sizes Available (UK/IND)</label>
+                  <span className="text-[11px] text-[#64748B]">Click to toggle quick sizes</span>
+                </div>
+                
+                {/* Standard size pills toggle */}
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {['5', '6', '7', '8', '9', '10', '11', '12'].map((sz) => {
+                    const isSelected = sizes.includes(sz);
+                    return (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => handleToggleSize(sz)}
+                        className={`w-9 h-8 rounded-lg text-xs font-bold transition flex items-center justify-center ${
+                          isSelected
+                            ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
+                            : 'bg-[#F7F8FC] text-[#64748B] hover:text-[#1E1B4B] border border-[#E7E5EF]'
+                        }`}
+                      >
+                        {sz}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom size input */}
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    placeholder="Add custom size (e.g. 4.5, 13)..."
+                    value={newSizeInput}
+                    onChange={(e) => setNewSizeInput(e.target.value)}
+                    className="bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-lg p-2 flex-1 font-medium focus:outline-none focus:border-[#6D5DFB]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCustomSize}
+                    className="px-3 py-2 bg-[#EEEBFF] hover:bg-[#6D5DFB] hover:text-white text-xs text-[#6D5DFB] rounded-lg font-semibold transition"
+                  >
+                    Add Size
+                  </button>
+                </div>
               </div>
 
               {/* Color List Builder */}

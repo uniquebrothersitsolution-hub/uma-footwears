@@ -20,7 +20,8 @@ export interface Product {
   id: string;
   name: string;
   category: string;
-  colors: ProductColor[];
+  sizes?: string[];
+  colors?: ProductColor[];
   price: number;            // MRP / Standard Retail Price
   wholesalePrice: number;   // Wholesale Cost Price (Admin Only)
   discountPercent: number;  // Default discount %
@@ -32,7 +33,8 @@ export interface BillItem {
   id: string;
   productId: string;
   productName: string;
-  color: string;
+  size?: string;
+  color?: string;
   price: number;            // Base price per unit
   wholesalePrice?: number;  // Wholesale price (Admin record)
   discountPercent: number;  // Discount percentage applied
