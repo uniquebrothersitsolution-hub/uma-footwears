@@ -29,6 +29,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [shopSettings, setShopSettings] = useState<ShopSettings>(() => StorageService.getShopSettings());
 
   useEffect(() => {
+    const unsubscribe = StorageService.onDataChange(() => {
+      setShopSettings(StorageService.getShopSettings());
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (userRole) {
       localStorage.setItem('uma_active_role', userRole);
       localStorage.setItem('uma_active_username', username);

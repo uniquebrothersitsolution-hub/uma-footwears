@@ -22,10 +22,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [selectedSize, setSelectedSize] = useState<string>('');
   
   // Pricing & calculation states
-  const [basePrice, setBasePrice] = useState<number | ''>('');
-  const [wholesalePrice, setWholesalePrice] = useState<number | ''>('');
-  const [discountPercent, setDiscountPercent] = useState<number | ''>(0);
-  const [discountedPrice, setDiscountedPrice] = useState<number | ''>('');
+  const [basePrice, setBasePrice] = useState<number | string>('');
+  const [wholesalePrice, setWholesalePrice] = useState<number | string>('');
+  const [discountPercent, setDiscountPercent] = useState<number | string>(0);
+  const [discountedPrice, setDiscountedPrice] = useState<number | string>('');
   const [quantity, setQuantity] = useState<number>(1);
 
   // Cart & Customer Details
@@ -64,46 +64,75 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       setWholesalePrice(prod.wholesalePrice || 0);
       setDiscountPercent(prod.discountPercent || 0);
 
-      // Calculate initial discounted price
+      // Calculate initial discounted price with 2-decimal precision
       const disc = prod.discountPercent || 0;
       const netPrice = prod.price - (prod.price * disc) / 100;
-      setDiscountedPrice(Math.round(netPrice));
+      setDiscountedPrice(Math.round(netPrice * 100) / 100);
     }
   };
 
-  // When Base Price or Discount % changes -> Auto-calculate Discounted & Cash Price
-  useEffect(() => {
-    if (basePrice !== '' && basePrice >= 0) {
-      const disc = typeof discountPercent === 'number' ? discountPercent : 0;
-      const net = basePrice - (basePrice * disc) / 100;
-      setDiscountedPrice(Math.round(net));
+  // When Base Price changes -> Auto-calculate Discounted Price
+  const handleBasePriceChange = (val: string) => {
+    setBasePrice(val);
+    const numPrice = parseFloat(val);
+    const numDisc = typeof discountPercent === 'number' ? discountPercent : parseFloat(discountPercent);
+    if (!isNaN(numPrice) && numPrice >= 0) {
+      const disc = (!isNaN(numDisc) && numDisc >= 0) ? numDisc : 0;
+      const net = numPrice - (numPrice * disc) / 100;
+      setDiscountedPrice(Math.round(net * 100) / 100);
     } else {
       setDiscountedPrice('');
     }
-  }, [basePrice, discountPercent]);
+  };
+
+  // When Discount % changes -> Auto-calculate Discounted Price
+  const handleDiscountPercentChange = (val: string) => {
+    setDiscountPercent(val);
+    const numPrice = typeof basePrice === 'number' ? basePrice : parseFloat(basePrice);
+    const numDisc = parseFloat(val);
+    if (!isNaN(numPrice) && numPrice >= 0) {
+      if (val === '' || isNaN(numDisc)) {
+        setDiscountedPrice(numPrice);
+      } else {
+        const net = numPrice - (numPrice * numDisc) / 100;
+        setDiscountedPrice(Math.max(0, Math.round(net * 100) / 100));
+      }
+    }
+  };
 
   // Handle manual Discounted Price edit -> Auto-calculate Discount %
-  const handleDiscountedPriceChange = (val: number | '') => {
+  const handleDiscountedPriceChange = (val: string) => {
     setDiscountedPrice(val);
-    if (typeof basePrice === 'number' && basePrice > 0 && typeof val === 'number') {
-      const calculatedDisc = ((basePrice - val) / basePrice) * 100;
-      setDiscountPercent(Math.max(0, Math.round(calculatedDisc * 10) / 10));
+    const numPrice = typeof basePrice === 'number' ? basePrice : parseFloat(basePrice);
+    const numDiscPrice = parseFloat(val);
+    if (!isNaN(numPrice) && numPrice > 0) {
+      if (val === '' || isNaN(numDiscPrice)) {
+        setDiscountPercent(0);
+      } else {
+        const calculatedDisc = ((numPrice - numDiscPrice) / numPrice) * 100;
+        setDiscountPercent(Math.max(0, Math.round(calculatedDisc * 100) / 100));
+      }
     }
   };
 
   // Add Item to Cart
   const handleAddToCart = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!productNameInput.trim()) return;
-    if (typeof basePrice !== 'number' || basePrice <= 0) return;
+    const numBasePrice = typeof basePrice === 'number' ? basePrice : parseFloat(basePrice);
+    if (isNaN(numBasePrice) || numBasePrice <= 0) return;
 
-    const netUnitPrice = typeof discountedPrice === 'number' ? discountedPrice : basePrice;
-    const itemTotal = netUnitPrice * quantity;
+    const numDiscPrice = typeof discountedPrice === 'number' ? discountedPrice : (discountedPrice === '' ? numBasePrice : parseFloat(discountedPrice));
+    const netUnitPrice = !isNaN(numDiscPrice) ? Math.round(numDiscPrice * 100) / 100 : numBasePrice;
+    const itemTotal = Math.round(netUnitPrice * quantity * 100) / 100;
+
+    const numDiscPct = typeof discountPercent === 'number' ? discountPercent : (discountPercent === '' ? 0 : parseFloat(discountPercent));
+    const finalDiscPercent = !isNaN(numDiscPct) ? Math.round(numDiscPct * 100) / 100 : 0;
 
     const prod = products.find(p => p.id === selectedProductId);
-    const itemWholesale = typeof wholesalePrice === 'number' && wholesalePrice > 0
-      ? wholesalePrice
-      : (prod?.wholesalePrice || Math.round(basePrice * 0.6));
+    const numWholesale = typeof wholesalePrice === 'number' ? wholesalePrice : (wholesalePrice === '' ? 0 : parseFloat(wholesalePrice));
+    const itemWholesale = !isNaN(numWholesale) && numWholesale > 0
+      ? numWholesale
+      : (prod?.wholesalePrice || Math.round(numBasePrice * 0.6 * 100) / 100);
 
     const chosenSize = selectedSize.trim() || 'Standard';
     const newItem: BillItem = {
@@ -112,9 +141,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       productName: productNameInput.trim(),
       size: chosenSize,
       color: chosenSize,
-      price: basePrice,
+      price: numBasePrice,
       wholesalePrice: itemWholesale,
-      discountPercent: typeof discountPercent === 'number' ? discountPercent : 0,
+      discountPercent: finalDiscPercent,
       discountedPrice: netUnitPrice,
       quantity: quantity,
       totalPrice: itemTotal
@@ -140,9 +169,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   };
 
   // Calculate Totals
-  const subtotal = cartItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const totalPayable = cartItems.reduce((acc, item) => acc + item.totalPrice, 0);
-  const totalDiscount = subtotal - totalPayable;
+  const subtotal = Math.round(cartItems.reduce((acc, item) => acc + item.price * item.quantity, 0) * 100) / 100;
+  const totalPayable = Math.round(cartItems.reduce((acc, item) => acc + item.totalPrice, 0) * 100) / 100;
+  const totalDiscount = Math.max(0, Math.round((subtotal - totalPayable) * 100) / 100);
 
   // Submit Transaction & Optionally Print
   const handleCompleteTransaction = (andPrint: boolean = false) => {
@@ -316,9 +345,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     placeholder="0.00"
                     value={basePrice}
-                    onChange={(e) => setBasePrice(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => handleBasePriceChange(e.target.value)}
                     required
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold focus:outline-none"
                   />
@@ -335,10 +365,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                       type="number"
                       min="0"
                       max="100"
-                      step="0.5"
+                      step="any"
                       placeholder="0"
                       value={discountPercent}
-                      onChange={(e) => setDiscountPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                      onChange={(e) => handleDiscountPercentChange(e.target.value)}
                       className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#F59E0B] rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold focus:outline-none"
                     />
                     <span className="absolute right-3 top-2.5 text-[#64748B] text-xs font-bold">%</span>
@@ -353,9 +383,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     placeholder="Auto calculated..."
                     value={discountedPrice}
-                    onChange={(e) => handleDiscountedPriceChange(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => handleDiscountedPriceChange(e.target.value)}
                     className="w-full bg-[#22C55E]/10 border border-[#22C55E]/30 text-[#22C55E] rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold focus:outline-none"
                   />
                 </div>
@@ -376,21 +407,28 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     placeholder="Enter Wholesale Cost Price"
                     value={wholesalePrice}
-                    onChange={(e) => setWholesalePrice(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => setWholesalePrice(e.target.value)}
                     className="w-full bg-white border border-[#F59E0B]/40 text-[#1E1B4B] rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none"
                   />
-                  {typeof basePrice === 'number' && typeof wholesalePrice === 'number' && wholesalePrice > 0 && (() => {
-                    const effSelling = typeof discountedPrice === 'number' && discountedPrice > 0 ? discountedPrice : basePrice;
-                    const netMargin = effSelling - wholesalePrice;
-                    const marginPct = wholesalePrice > 0 ? ((netMargin / wholesalePrice) * 100).toFixed(1) : '0';
-                    return (
-                      <div className="text-[11px] text-[#F59E0B] font-medium flex items-center justify-between">
-                        <span>Net Profit (Discounted - Wholesale):</span>
-                        <span className="font-bold font-mono">₹{netMargin.toFixed(0)} ({marginPct}%)</span>
-                      </div>
-                    );
+                  {(() => {
+                    const numBase = typeof basePrice === 'number' ? basePrice : parseFloat(basePrice);
+                    const numWholesale = typeof wholesalePrice === 'number' ? wholesalePrice : parseFloat(wholesalePrice);
+                    const numDiscPrice = typeof discountedPrice === 'number' ? discountedPrice : parseFloat(discountedPrice);
+                    if (!isNaN(numBase) && !isNaN(numWholesale) && numWholesale > 0) {
+                      const effSelling = !isNaN(numDiscPrice) && numDiscPrice > 0 ? numDiscPrice : numBase;
+                      const netMargin = effSelling - numWholesale;
+                      const marginPct = numWholesale > 0 ? ((netMargin / numWholesale) * 100).toFixed(1) : '0';
+                      return (
+                        <div className="text-[11px] text-[#F59E0B] font-medium flex items-center justify-between">
+                          <span>Net Profit (Discounted - Wholesale):</span>
+                          <span className="font-bold font-mono">₹{netMargin.toFixed(2)} ({marginPct}%)</span>
+                        </div>
+                      );
+                    }
+                    return null;
                   })()}
                 </div>
               )}
@@ -507,13 +545,13 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                           <span>Qty: {item.quantity}</span>
                         </div>
                         <div className="text-[11px] font-mono text-[#64748B]">
-                          ₹{item.price} {item.discountPercent > 0 && <span className="text-[#F59E0B] font-semibold">(-{item.discountPercent}%)</span>} → ₹{item.discountedPrice}/pc
+                          ₹{item.price.toFixed(2)} {item.discountPercent > 0 && <span className="text-[#F59E0B] font-semibold">(-{item.discountPercent}%)</span>} → ₹{item.discountedPrice.toFixed(2)}/pc
                         </div>
                       </div>
 
                       <div className="flex items-center space-x-3">
                         <div className="text-right font-mono">
-                          <div className="text-sm font-extrabold text-[#6D5DFB]">₹{item.totalPrice}</div>
+                          <div className="text-sm font-extrabold text-[#6D5DFB]">₹{item.totalPrice.toFixed(2)}</div>
                         </div>
                         <button
                           onClick={() => handleRemoveFromCart(item.id)}
@@ -593,6 +631,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                         <input
                           type="number"
                           min="0"
+                          step="any"
                           max={totalPayable}
                           value={splitCashAmount}
                           onChange={(e) => {
@@ -617,6 +656,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                         <input
                           type="number"
                           min="0"
+                          step="any"
                           max={totalPayable}
                           value={splitUpiAmount}
                           onChange={(e) => {

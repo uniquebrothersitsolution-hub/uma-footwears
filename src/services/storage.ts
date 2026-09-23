@@ -1,112 +1,486 @@
-import { Product, SaleTransaction, UserAccount, ShopSettings } from '../types';
+import { Product, SaleTransaction, UserAccount, ShopSettings, LedgerColumnConfig, ColumnDataType } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient';
+import { BUILTIN_LEDGER_COLUMNS } from './exportExcel';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'uma_footwears_products',
   TRANSACTIONS: 'uma_footwears_transactions',
   ACCOUNTS: 'uma_footwears_accounts',
   SETTINGS: 'uma_footwears_settings',
+  LEDGER_COLUMNS: 'uma_footwears_ledger_columns',
+  CUSTOM_COLUMNS: 'uma_footwears_custom_columns',
+  COLUMN_LABELS: 'uma_footwears_column_labels',
 };
 
 // Initial Seed Data for UMA FOOTWEARS
 const INITIAL_PRODUCTS: Product[] = [
   {
     id: 'prod-1',
-    code: 'UMA-SP-01',
-    name: 'Air Sprint Sports Running Shoes',
-    category: 'Sports',
-    sizes: ['6', '7', '8', '9', '10', '11'],
-    colors: [
-      { name: 'Black/Red', hex: '#ef4444' },
-      { name: 'Navy Blue', hex: '#1e3a8a' },
-      { name: 'All Black', hex: '#09090b' },
-      { name: 'Grey/Neon', hex: '#84cc16' }
-    ],
-    price: 1899,
-    wholesalePrice: 1150,
-    discountPercent: 10,
-    stock: 45
+    code: 'N1-WU1020',
+    name: 'WALKARO WU1020',
+    category: 'WALKARO',
+    sizes: ["10"],
+    colors: [{ name: 'Standard' }],
+    price: 629,
+    wholesalePrice: 415.14,
+    discountPercent: 0,
+    stock: 1
   },
   {
     id: 'prod-2',
-    code: 'UMA-FM-02',
-    name: 'Classic Genuine Leather Oxford',
-    category: 'Formal',
-    sizes: ['6', '7', '8', '9', '10', '11'],
-    colors: [
-      { name: 'Tan Brown', hex: '#78350f' },
-      { name: 'Jet Black', hex: '#18181b' },
-      { name: 'Cherry Wood', hex: '#451a03' }
-    ],
-    price: 2499,
-    wholesalePrice: 1550,
-    discountPercent: 15,
-    stock: 30
+    code: 'N1-1721G',
+    name: 'PARAGON 1721G',
+    category: 'PARAGON',
+    sizes: ["9"],
+    colors: [{ name: 'Standard' }],
+    price: 205,
+    wholesalePrice: 143.5,
+    discountPercent: 0,
+    stock: 1
   },
   {
     id: 'prod-3',
-    code: 'UMA-SN-03',
-    name: 'Urban Street Canvas Sneakers',
-    category: 'Casual',
-    sizes: ['6', '7', '8', '9', '10'],
-    colors: [
-      { name: 'Pure White', hex: '#f8fafc' },
-      { name: 'Olive Green', hex: '#3f6212' },
-      { name: 'Midnight Black', hex: '#0f172a' }
-    ],
-    price: 1299,
-    wholesalePrice: 780,
-    discountPercent: 10,
-    stock: 60
+    code: 'N2-X PRO',
+    name: 'APL X PRO',
+    category: 'APL',
+    sizes: ["8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 399.9,
+    wholesalePrice: 271.93,
+    discountPercent: 0,
+    stock: 5
   },
   {
     id: 'prod-4',
-    code: 'UMA-SD-04',
-    name: 'Comfort Grip Leather Sandals',
-    category: 'Sandals',
-    sizes: ['6', '7', '8', '9', '10'],
-    colors: [
-      { name: 'Dark Brown', hex: '#582f0e' },
-      { name: 'Tan', hex: '#9a7b56' },
-      { name: 'Black', hex: '#18181b' }
-    ],
-    price: 999,
-    wholesalePrice: 580,
-    discountPercent: 5,
-    stock: 50
+    code: 'N3-JC1150',
+    name: 'JIVERS JC1150',
+    category: 'JIVERS',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 239,
+    wholesalePrice: 167.3,
+    discountPercent: 0,
+    stock: 1
   },
   {
     id: 'prod-5',
-    code: 'UMA-FF-05',
-    name: 'Soft Cushion Daily Flip Flops',
-    category: 'Slippers',
-    sizes: ['5', '6', '7', '8', '9', '10'],
-    colors: [
-      { name: 'Royal Blue', hex: '#2563eb' },
-      { name: 'Teal', hex: '#0d9488' },
-      { name: 'Charcoal', hex: '#334155' },
-      { name: 'Crimson Red', hex: '#dc2626' }
-    ],
-    price: 399,
-    wholesalePrice: 210,
+    code: 'N4-1129G',
+    name: 'PARAGON 1129G',
+    category: 'PARAGON',
+    sizes: ["10"],
+    colors: [{ name: 'Standard' }],
+    price: 177,
+    wholesalePrice: 123.9,
     discountPercent: 0,
-    stock: 120
+    stock: 1
   },
   {
     id: 'prod-6',
-    code: 'UMA-WM-06',
-    name: 'Elegance Heeled Ethnic Sandals',
-    category: 'Womens',
-    sizes: ['4', '5', '6', '7', '8'],
-    colors: [
-      { name: 'Rose Gold', hex: '#fb7185' },
-      { name: 'Metallic Silver', hex: '#cbd5e1' },
-      { name: 'Matte Black', hex: '#27272a' }
-    ],
-    price: 1599,
-    wholesalePrice: 920,
-    discountPercent: 12,
-    stock: 35
+    code: 'N6-BX1256',
+    name: 'WALKARO BX1256',
+    category: 'WALKARO',
+    sizes: ["8","9"],
+    colors: [{ name: 'Standard' }],
+    price: 224.5,
+    wholesalePrice: 157.15,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-7',
+    code: 'N7-GP4077',
+    name: 'VKC GP4077',
+    category: 'VKC',
+    sizes: ["7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 309,
+    wholesalePrice: 203.94,
+    discountPercent: 0,
+    stock: 8
+  },
+  {
+    id: 'prod-8',
+    code: 'N8-WG5007',
+    name: 'WALKARO WG5007',
+    category: 'WALKARO',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 269,
+    wholesalePrice: 177.54,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-9',
+    code: 'N9-TYPE 1',
+    name: 'AIR FAX TYPE 1',
+    category: 'AIR FAX',
+    sizes: ["7","8"],
+    colors: [{ name: 'Standard' }],
+    price: 485,
+    wholesalePrice: 300.7,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-10',
+    code: 'N10-T2055',
+    name: 'ODYSSIA TUFA T2055',
+    category: 'ODYSSIA TUFA',
+    sizes: ["9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 699,
+    wholesalePrice: 475.32,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-11',
+    code: 'N11-3325',
+    name: 'MARK 3325',
+    category: 'MARK',
+    sizes: ["7","10"],
+    colors: [{ name: 'Standard' }],
+    price: 339,
+    wholesalePrice: 223.74,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-12',
+    code: 'N12-WG5002',
+    name: 'WALKARO WG5002',
+    category: 'WALKARO',
+    sizes: ["6","7","8"],
+    colors: [{ name: 'Standard' }],
+    price: 299,
+    wholesalePrice: 194.35,
+    discountPercent: 0,
+    stock: 7
+  },
+  {
+    id: 'prod-13',
+    code: 'N13-GM5511',
+    name: 'WALKARO GM5511',
+    category: 'WALKARO',
+    sizes: ["7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 249,
+    wholesalePrice: 161.85,
+    discountPercent: 0,
+    stock: 5
+  },
+  {
+    id: 'prod-14',
+    code: 'N14-WGR50044',
+    name: 'WALKARO WGR50044',
+    category: 'WALKARO',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 309,
+    wholesalePrice: 200.85,
+    discountPercent: 0,
+    stock: 1
+  },
+  {
+    id: 'prod-15',
+    code: 'N15-GP4216',
+    name: 'VKC GP4216',
+    category: 'VKC',
+    sizes: ["7","10"],
+    colors: [{ name: 'Standard' }],
+    price: 279,
+    wholesalePrice: 184.14,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-16',
+    code: 'N17-SFG4018',
+    name: 'SPARX SFG4018',
+    category: 'SPARX',
+    sizes: ["8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 399.5,
+    wholesalePrice: 271.66,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-17',
+    code: 'N18-W1030',
+    name: 'WALKARO W1030',
+    category: 'WALKARO',
+    sizes: ["9"],
+    colors: [{ name: 'Standard' }],
+    price: 309,
+    wholesalePrice: 200.85,
+    discountPercent: 0,
+    stock: 1
+  },
+  {
+    id: 'prod-18',
+    code: 'N20-GP4203',
+    name: 'VKC GP4203',
+    category: 'VKC',
+    sizes: ["9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 279,
+    wholesalePrice: 184.14,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-19',
+    code: 'N22-BX1260',
+    name: 'WALKARO BX1260',
+    category: 'WALKARO',
+    sizes: ["7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 259.5,
+    wholesalePrice: 168.68,
+    discountPercent: 0,
+    stock: 6
+  },
+  {
+    id: 'prod-20',
+    code: 'N23-BG1410',
+    name: 'AQUALITE BG1410',
+    category: 'AQUALITE',
+    sizes: ["9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 349.5,
+    wholesalePrice: 244.65,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-21',
+    code: 'N24-LP1042',
+    name: 'VKC LP1042',
+    category: 'VKC',
+    sizes: ["6","7","9"],
+    colors: [{ name: 'Standard' }],
+    price: 339,
+    wholesalePrice: 223.74,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-22',
+    code: 'N26-1753G',
+    name: 'PARAGON 1753G',
+    category: 'PARAGON',
+    sizes: ["6","7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 229.5,
+    wholesalePrice: 160.65,
+    discountPercent: 0,
+    stock: 13
+  },
+  {
+    id: 'prod-23',
+    code: 'N26-AL621P',
+    name: 'AQUALITE AL621P',
+    category: 'AQUALITE',
+    sizes: ["8","9"],
+    colors: [{ name: 'Standard' }],
+    price: 279.5,
+    wholesalePrice: 195.65,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-24',
+    code: 'N27-BER1',
+    name: 'BERSACHE BER1',
+    category: 'BERSACHE',
+    sizes: ["7","10"],
+    colors: [{ name: 'Standard' }],
+    price: 300,
+    wholesalePrice: 195,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-25',
+    code: 'N28-GP4551',
+    name: 'VKC GP4551',
+    category: 'VKC',
+    sizes: ["8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 316,
+    wholesalePrice: 208.56,
+    discountPercent: 0,
+    stock: 5
+  },
+  {
+    id: 'prod-26',
+    code: 'N29-WC8767',
+    name: 'WALKARO WC8767',
+    category: 'WALKARO',
+    sizes: ["7","10"],
+    colors: [{ name: 'Standard' }],
+    price: 379,
+    wholesalePrice: 246.35,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-27',
+    code: 'N30-WGB53232',
+    name: 'WALKARO WGB53232',
+    category: 'WALKARO',
+    sizes: ["7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 269.5,
+    wholesalePrice: 188.65,
+    discountPercent: 0,
+    stock: 6
+  },
+  {
+    id: 'prod-28',
+    code: 'N32-GP4258',
+    name: 'VKC GP4258',
+    category: 'VKC',
+    sizes: ["7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 359,
+    wholesalePrice: 236.94,
+    discountPercent: 0,
+    stock: 5
+  },
+  {
+    id: 'prod-29',
+    code: 'N33-WG5661',
+    name: 'WALKARO WG5661',
+    category: 'WALKARO',
+    sizes: ["6","8","10"],
+    colors: [{ name: 'Standard' }],
+    price: 384,
+    wholesalePrice: 249.6,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-30',
+    code: 'N34-DG9163',
+    name: 'VKC DG9163',
+    category: 'VKC',
+    sizes: ["7","8"],
+    colors: [{ name: 'Standard' }],
+    price: 319,
+    wholesalePrice: 210.54,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-31',
+    code: 'N35-WGR53383',
+    name: 'WALKARO WGR53383',
+    category: 'WALKARO',
+    sizes: ["8","10"],
+    colors: [{ name: 'Standard' }],
+    price: 299,
+    wholesalePrice: 194.35,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-32',
+    code: 'N37-GP4103',
+    name: 'VKC GP4103',
+    category: 'VKC',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 259,
+    wholesalePrice: 170.94,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-33',
+    code: 'N38-NV35',
+    name: 'AEROWALK NV35',
+    category: 'AEROWALK',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 369,
+    wholesalePrice: 254.61,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-34',
+    code: 'N40-WS9132',
+    name: 'WALKARO WS9132',
+    category: 'WALKARO',
+    sizes: ["8"],
+    colors: [{ name: 'Standard' }],
+    price: 1099,
+    wholesalePrice: 549.5,
+    discountPercent: 0,
+    stock: 1
+  },
+  {
+    id: 'prod-35',
+    code: 'N42-ASICS',
+    name: 'ADUTE ASICS',
+    category: 'ADUTE',
+    sizes: ["10"],
+    colors: [{ name: 'Standard' }],
+    price: 600,
+    wholesalePrice: 390,
+    discountPercent: 0,
+    stock: 1
+  },
+  {
+    id: 'prod-36',
+    code: 'N43-137',
+    name: 'NAYASHA 137',
+    category: 'NAYASHA',
+    sizes: ["6","7","8","9","10"],
+    colors: [{ name: 'Standard' }],
+    price: 550,
+    wholesalePrice: 335.5,
+    discountPercent: 0,
+    stock: 10
+  },
+  {
+    id: 'prod-37',
+    code: 'N44-DG55152',
+    name: 'VKC DG55152',
+    category: 'VKC',
+    sizes: ["7","8","10"],
+    colors: [{ name: 'Standard' }],
+    price: 799,
+    wholesalePrice: 519.35,
+    discountPercent: 0,
+    stock: 3
+  },
+  {
+    id: 'prod-38',
+    code: 'N46-CAPTAIN13',
+    name: 'ASIAN CAPTAIN13',
+    category: 'ASIAN',
+    sizes: ["6","9"],
+    colors: [{ name: 'Standard' }],
+    price: 649,
+    wholesalePrice: 395.89,
+    discountPercent: 0,
+    stock: 2
+  },
+  {
+    id: 'prod-39',
+    code: 'N48-ATI',
+    name: 'ADUTE ATI',
+    category: 'ADUTE',
+    sizes: ["10"],
+    colors: [{ name: 'Standard' }],
+    price: 650,
+    wholesalePrice: 422.5,
+    discountPercent: 0,
+    stock: 2
   }
 ];
 
@@ -158,9 +532,14 @@ export const StorageService = {
     try {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        // If local storage still holds old products, automatically flush and replace with INITIAL_PRODUCTS
+        if (parsed.some(p => p.code?.startsWith('UMA-') || p.code === 'N 1' || p.code === '1721G')) {
+          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
+          return INITIAL_PRODUCTS;
+        }
         return parsed.map((p: Product) => ({
           ...p,
-          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['6', '7', '8', '9', '10', '11']
+          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10']
         }));
       }
       return INITIAL_PRODUCTS;
@@ -206,8 +585,8 @@ export const StorageService = {
         wholesalePrice: Number(row.wholesale_price || 0),
         discountPercent: Number(row.discount_percent || 0),
         stock: Number(row.stock || 0),
-        colors: Array.isArray(row.colors) ? row.colors : [],
-        sizes: Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['6', '7', '8', '9', '10', '11']
+        colors: Array.isArray(row.colors) && row.colors.length > 0 ? row.colors : [{ name: 'Standard' }],
+        sizes: Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['7', '8', '9', '10']
       }));
 
       this.saveProducts(products);
@@ -467,6 +846,7 @@ export const StorageService = {
         finalAmount: Number(tx.final_amount),
         splitDetails: tx.split_details || undefined,
         staffUsername: tx.staff_username,
+        customFields: tx.custom_fields || {},
         items: (tx.transaction_items || []).map((item: any) => ({
           id: item.id,
           productId: item.product_id || item.product_code || 'prod-1',
@@ -475,7 +855,7 @@ export const StorageService = {
           size: item.size || '',
           price: Number(item.price),
           wholesalePrice: Number(item.wholesale_price || 0),
-          discountPercent: item.price > 0 ? Math.round(((item.price - item.discounted_price) / item.price) * 100) : 0,
+          discountPercent: item.price > 0 ? Number((((item.price - item.discounted_price) / item.price) * 100).toFixed(2)) : 0,
           discountedPrice: Number(item.discounted_price),
           quantity: Number(item.quantity),
           totalPrice: Number(item.total_price)
@@ -529,7 +909,8 @@ export const StorageService = {
                 total_discount: transaction.totalDiscount,
                 final_amount: transaction.finalAmount,
                 split_details: transaction.splitDetails || null,
-                staff_username: transaction.staffUsername
+                staff_username: transaction.staffUsername,
+                custom_fields: transaction.customFields || {}
               })
               .select('id')
               .single();
@@ -677,15 +1058,359 @@ export const StorageService = {
       return {
         ...INITIAL_SETTINGS,
         ...parsed,
-        tagline: parsed.tagline || INITIAL_SETTINGS.tagline
+        tagline: parsed.tagline || INITIAL_SETTINGS.tagline,
+        ledgerColumns: parsed.ledgerColumns || undefined
       };
     } catch {
       return INITIAL_SETTINGS;
     }
   },
 
+  getCustomColumns(): LedgerColumnConfig[] {
+    const settings = this.getShopSettings();
+    if (settings.customColumns && Array.isArray(settings.customColumns)) {
+      return settings.customColumns;
+    }
+    const local = localStorage.getItem(STORAGE_KEYS.CUSTOM_COLUMNS);
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return [];
+  },
+
+  getColumnLabels(): Record<string, string> {
+    const settings = this.getShopSettings();
+    if (settings.columnLabels && typeof settings.columnLabels === 'object') {
+      return settings.columnLabels;
+    }
+    const local = localStorage.getItem(STORAGE_KEYS.COLUMN_LABELS);
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch {}
+    }
+    return {};
+  },
+
+  getAllLedgerColumns(): LedgerColumnConfig[] {
+    const labels = this.getColumnLabels();
+    const custom = this.getCustomColumns();
+    const builtIn = BUILTIN_LEDGER_COLUMNS
+      .filter((col) => {
+        // Filter out built-in columns that admin has deleted
+        const deletedKey = `__deleted_${col.id}`;
+        return labels[deletedKey] !== 'true';
+      })
+      .map((col) => ({
+        ...col,
+        label: labels[col.id] || col.label
+      }));
+    return [...builtIn, ...custom];
+  },
+
+  getLedgerColumns(): string[] {
+    const settings = this.getShopSettings();
+    if (settings.ledgerColumns && Array.isArray(settings.ledgerColumns) && settings.ledgerColumns.length > 0) {
+      return settings.ledgerColumns;
+    }
+    const local = localStorage.getItem(STORAGE_KEYS.LEDGER_COLUMNS);
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {}
+    }
+    return ['billNoDate', 'customer', 'itemsBilled', 'payment', 'billedBy', 'amount'];
+  },
+
+  saveLedgerColumns(columns: string[]): void {
+    localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(columns));
+    const current = this.getShopSettings();
+    const updated = {
+      ...current,
+      ledgerColumns: columns
+    };
+    this.saveShopSettings(updated);
+
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        (async () => {
+          try {
+            const { error } = await client
+              .from('shop_settings')
+              .update({
+                ledger_columns: columns,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', 1);
+            if (error) console.warn('Cloud shop settings ledger_columns sync error:', error);
+          } catch (err) {
+            console.warn('Cloud shop settings update error:', err);
+          }
+        })();
+      }
+    }
+  },
+
+  addCustomColumn(col: { label: string; dataType: ColumnDataType; defaultValue?: string }): LedgerColumnConfig {
+    const customCols = this.getCustomColumns();
+    const cleanLabel = col.label.trim();
+    const newId = `col_${Date.now()}`;
+    const newColumn: LedgerColumnConfig = {
+      id: newId,
+      label: cleanLabel,
+      dataType: col.dataType,
+      defaultVisible: true,
+      isCustom: true,
+      defaultValue: col.defaultValue || ''
+    };
+
+    const updatedCustom = [...customCols, newColumn];
+    const visibleCols = this.getLedgerColumns();
+    const updatedVisible = [...visibleCols, newId];
+
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(updatedCustom));
+    localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(updatedVisible));
+
+    const current = this.getShopSettings();
+    this.saveShopSettings({
+      ...current,
+      customColumns: updatedCustom,
+      ledgerColumns: updatedVisible
+    });
+
+    return newColumn;
+  },
+
+  updateColumn(colId: string, updates: { label?: string; dataType?: ColumnDataType }): void {
+    const customCols = this.getCustomColumns();
+    const customIndex = customCols.findIndex((c) => c.id === colId);
+    const current = this.getShopSettings();
+
+    if (customIndex !== -1) {
+      const updatedCustom = [...customCols];
+      updatedCustom[customIndex] = {
+        ...updatedCustom[customIndex],
+        label: updates.label !== undefined ? updates.label.trim() : updatedCustom[customIndex].label,
+        dataType: updates.dataType !== undefined ? updates.dataType : updatedCustom[customIndex].dataType
+      };
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(updatedCustom));
+      this.saveShopSettings({
+        ...current,
+        customColumns: updatedCustom
+      });
+    } else if (updates.label) {
+      // Renaming built-in column
+      const labels = this.getColumnLabels();
+      const updatedLabels = {
+        ...labels,
+        [colId]: updates.label.trim()
+      };
+      localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(updatedLabels));
+      this.saveShopSettings({
+        ...current,
+        columnLabels: updatedLabels
+      });
+    }
+  },
+
+  deleteCustomColumn(colId: string): void {
+    const customCols = this.getCustomColumns();
+    const updatedCustom = customCols.filter((c) => c.id !== colId);
+    const visibleCols = this.getLedgerColumns().filter((id) => id !== colId);
+
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(updatedCustom));
+    localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(visibleCols));
+
+    const current = this.getShopSettings();
+    this.saveShopSettings({
+      ...current,
+      customColumns: updatedCustom,
+      ledgerColumns: visibleCols
+    });
+  },
+
+  resetColumns(): void {
+    const defaultIds = ['billNoDate', 'customer', 'itemsBilled', 'payment', 'billedBy', 'amount'];
+    localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(defaultIds));
+    // Clear all labels AND deleted markers
+    localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify({}));
+    const current = this.getShopSettings();
+    this.saveShopSettings({
+      ...current,
+      ledgerColumns: defaultIds,
+      columnLabels: {}
+    });
+  },
+
+  /**
+   * Delete a built-in column by marking it as deleted.
+   * Removes it from visible columns and marks it in columnLabels.
+   */
+  deleteBuiltinColumn(colId: string): void {
+    const labels = this.getColumnLabels();
+    const deletedKey = `__deleted_${colId}`;
+    const updatedLabels = {
+      ...labels,
+      [deletedKey]: 'true'
+    };
+
+    // Also remove from visible columns
+    const visibleCols = this.getLedgerColumns().filter((id) => id !== colId);
+
+    localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(updatedLabels));
+    localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(visibleCols));
+
+    const current = this.getShopSettings();
+    this.saveShopSettings({
+      ...current,
+      columnLabels: updatedLabels,
+      ledgerColumns: visibleCols
+    });
+  },
+
+  /**
+   * Toggle whether a column is visible to staff users.
+   * Works for both built-in and custom columns.
+   */
+  toggleStaffVisibility(colId: string, visible: boolean): void {
+    const customCols = this.getCustomColumns();
+    const customIndex = customCols.findIndex((c) => c.id === colId);
+    const current = this.getShopSettings();
+
+    if (customIndex !== -1) {
+      // Custom column - update staffVisible directly
+      const updatedCustom = [...customCols];
+      updatedCustom[customIndex] = {
+        ...updatedCustom[customIndex],
+        staffVisible: visible
+      };
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(updatedCustom));
+      this.saveShopSettings({
+        ...current,
+        customColumns: updatedCustom
+      });
+    } else {
+      // Built-in column - store staff visibility in columnLabels as a special key
+      const labels = this.getColumnLabels();
+      const staffVisibilityKey = `__staffVisible_${colId}`;
+      const updatedLabels = {
+        ...labels,
+        [staffVisibilityKey]: visible ? 'true' : 'false'
+      };
+      localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(updatedLabels));
+      this.saveShopSettings({
+        ...current,
+        columnLabels: updatedLabels
+      });
+    }
+  },
+
+  /**
+   * Get the staff visibility setting for a built-in column.
+   * Returns true (visible) by default if not explicitly set.
+   */
+  isColumnStaffVisible(colId: string): boolean {
+    // Check custom columns first
+    const customCols = this.getCustomColumns();
+    const customCol = customCols.find((c) => c.id === colId);
+    if (customCol) {
+      return customCol.staffVisible !== false; // default true
+    }
+
+    // Check built-in columns via columnLabels special keys
+    const labels = this.getColumnLabels();
+    const staffVisibilityKey = `__staffVisible_${colId}`;
+    if (staffVisibilityKey in labels) {
+      return labels[staffVisibilityKey] === 'true';
+    }
+
+    // Built-in columns with adminOnly are not staff visible by default
+    const builtInCol = BUILTIN_LEDGER_COLUMNS.find((c) => c.id === colId);
+    if (builtInCol?.adminOnly) {
+      return false;
+    }
+
+    return true; // Default: visible to staff
+  },
+
+  /**
+   * Get visible columns filtered by user role.
+   * Admin sees all visible columns; staff sees only staffVisible ones.
+   */
+  getVisibleColumnsForRole(userRole: 'admin' | 'staff'): string[] {
+    const allVisible = this.getLedgerColumns();
+    if (userRole === 'admin') return allVisible;
+
+    // Staff: filter out columns not marked as staff-visible
+    return allVisible.filter((colId) => this.isColumnStaffVisible(colId));
+  },
+
+  updateTransactionCustomField(txId: string, colId: string, value: any): SaleTransaction[] {
+    const transactions = this.getTransactions();
+    const updated = transactions.map((t) => {
+      if (t.id === txId || t.billNo === txId) {
+        return {
+          ...t,
+          customFields: {
+            ...(t.customFields || {}),
+            [colId]: value
+          }
+        };
+      }
+      return t;
+    });
+
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
+    this.emitDataChange();
+
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        const target = updated.find((t) => t.id === txId || t.billNo === txId);
+        if (target) {
+          (async () => {
+            try {
+              await client
+                .from('sales_transactions')
+                .update({ custom_fields: target.customFields || {} })
+                .or(`id.eq.${txId},bill_no.eq.${txId}`);
+            } catch (err) {
+              console.warn('Error saving transaction custom field to cloud:', err);
+            }
+          })();
+        }
+      }
+    }
+    return updated;
+  },
+
   saveShopSettings(settings: ShopSettings): void {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    const existing = this.getShopSettings();
+    const preservedColumns = settings.ledgerColumns || existing.ledgerColumns || this.getLedgerColumns();
+    const preservedCustomCols = settings.customColumns || existing.customColumns || this.getCustomColumns();
+    const preservedLabels = settings.columnLabels || existing.columnLabels || this.getColumnLabels();
+
+    const mergedSettings: ShopSettings = {
+      ...existing,
+      ...settings,
+      ledgerColumns: preservedColumns,
+      customColumns: preservedCustomCols,
+      columnLabels: preservedLabels
+    };
+
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(mergedSettings));
+    if (preservedColumns && preservedColumns.length > 0) {
+      localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(preservedColumns));
+    }
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(preservedCustomCols));
+    localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(preservedLabels));
+
     this.emitDataChange();
 
     if (isSupabaseConfigured()) {
@@ -695,12 +1420,15 @@ export const StorageService = {
           try {
             const { error } = await client.from('shop_settings').upsert({
               id: 1,
-              shop_name: settings.shopName,
-              tagline: settings.tagline || 'where every steps matters',
-              address: settings.address,
-              phone: settings.phone,
-              gstin: settings.gstin,
-              footer_message: settings.footerMessage,
+              shop_name: mergedSettings.shopName,
+              tagline: mergedSettings.tagline || 'where every steps matters',
+              address: mergedSettings.address,
+              phone: mergedSettings.phone,
+              gstin: mergedSettings.gstin,
+              footer_message: mergedSettings.footerMessage,
+              ledger_columns: preservedColumns,
+              custom_columns: preservedCustomCols,
+              column_labels: preservedLabels,
               updated_at: new Date().toISOString()
             });
             if (error) console.error('Cloud shop settings sync error:', error);
@@ -715,6 +1443,72 @@ export const StorageService = {
   // ==========================================
   // TWO-WAY CLOUD SYNC & MIGRATION
   // ==========================================
+  /**
+   * Fetch latest store settings and ledger column configurations from Supabase Cloud.
+   * Ensures column additions/deletions propagate across all devices.
+   */
+  async fetchShopSettingsFromCloud(): Promise<ShopSettings> {
+    if (!isSupabaseConfigured()) return this.getShopSettings();
+    const client = getSupabaseClient();
+    if (!client) return this.getShopSettings();
+
+    try {
+      const { data: settingsData, error } = await client
+        .from('shop_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Error fetching cloud shop settings:', error);
+        return this.getShopSettings();
+      }
+
+      if (settingsData) {
+        const cloudCols = Array.isArray(settingsData.ledger_columns) && settingsData.ledger_columns.length > 0
+          ? settingsData.ledger_columns
+          : undefined;
+
+        const cloudCustomCols = Array.isArray(settingsData.custom_columns)
+          ? settingsData.custom_columns
+          : undefined;
+
+        const cloudLabels = settingsData.column_labels && typeof settingsData.column_labels === 'object'
+          ? settingsData.column_labels
+          : undefined;
+
+        if (cloudCols) {
+          localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(cloudCols));
+        }
+        if (cloudCustomCols) {
+          localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(cloudCustomCols));
+        }
+        if (cloudLabels) {
+          localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(cloudLabels));
+        }
+
+        const settings: ShopSettings = {
+          shopName: settingsData.shop_name,
+          tagline: settingsData.tagline || 'where every steps matters',
+          address: settingsData.address,
+          phone: settingsData.phone,
+          gstin: settingsData.gstin || '',
+          footerMessage: settingsData.footer_message,
+          ledgerColumns: cloudCols,
+          customColumns: cloudCustomCols,
+          columnLabels: cloudLabels
+        };
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+        this.emitDataChange();
+        return settings;
+      }
+      return this.getShopSettings();
+    } catch (e) {
+      console.error('Failed to fetch cloud shop settings:', e);
+      return this.getShopSettings();
+    }
+  },
+
   /**
    * Complete Two-Way Sync: Pulls products, transactions, and settings from Supabase Cloud.
    * Ensures any logged-in system immediately displays all entries made across all machines.
@@ -731,23 +1525,8 @@ export const StorageService = {
       // 2. Sync all sales transactions with line items
       await this.fetchTransactionsFromCloud();
 
-      // 3. Sync store branding and settings
-      const { data: settingsData } = await client
-        .from('shop_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
-
-      if (settingsData) {
-        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify({
-          shopName: settingsData.shop_name,
-          tagline: settingsData.tagline || 'where every steps matters',
-          address: settingsData.address,
-          phone: settingsData.phone,
-          gstin: settingsData.gstin || '',
-          footerMessage: settingsData.footer_message
-        }));
-      }
+      // 3. Sync store branding and custom ledger columns
+      await this.fetchShopSettingsFromCloud();
 
       this.emitDataChange();
       return true;
@@ -824,7 +1603,8 @@ export const StorageService = {
               total_discount: tx.totalDiscount,
               final_amount: tx.finalAmount,
               split_details: tx.splitDetails || null,
-              staff_username: tx.staffUsername
+              staff_username: tx.staffUsername,
+              custom_fields: tx.customFields || {}
             })
             .select('id')
             .single();
@@ -858,6 +1638,9 @@ export const StorageService = {
         phone: settings.phone,
         gstin: settings.gstin,
         footer_message: settings.footerMessage,
+        ledger_columns: settings.ledgerColumns || this.getLedgerColumns(),
+        custom_columns: settings.customColumns || this.getCustomColumns(),
+        column_labels: settings.columnLabels || this.getColumnLabels(),
         updated_at: new Date().toISOString()
       });
 

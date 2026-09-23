@@ -43,6 +43,19 @@ export interface BillItem {
   totalPrice: number;       // discountedPrice * quantity
 }
 
+export type ColumnDataType = 'text' | 'number' | 'currency' | 'date' | 'tag';
+
+export interface LedgerColumnConfig {
+  id: string;
+  label: string;
+  dataType: ColumnDataType;
+  defaultVisible: boolean;
+  adminOnly?: boolean;
+  isCustom?: boolean;
+  defaultValue?: string;
+  staffVisible?: boolean; // Admin can toggle whether staff can see this column
+}
+
 export type PaymentMode = 'Cash' | 'UPI' | 'Split' | 'Card';
 
 export interface SaleTransaction {
@@ -61,6 +74,7 @@ export interface SaleTransaction {
     upi: number;
   };
   staffUsername: string;
+  customFields?: Record<string, any>;
 }
 
 export interface ShopSettings {
@@ -70,4 +84,8 @@ export interface ShopSettings {
   phone: string;
   gstin: string;
   footerMessage: string;
+  ledgerColumns?: string[];
+  customColumns?: LedgerColumnConfig[];
+  columnLabels?: Record<string, string>;
 }
+

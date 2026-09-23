@@ -38,8 +38,12 @@ create table if not exists public.sales_transactions (
   final_amount numeric(10,2) not null default 0,
   split_details jsonb, -- { "cash": 500, "upi": 500 }
   staff_username text not null default 'staff',
+  custom_fields jsonb not null default '{}'::jsonb,
   created_at timestamptz default now()
 );
+
+-- Safe migration if sales_transactions already exists
+alter table public.sales_transactions add column if not exists custom_fields jsonb not null default '{}'::jsonb;
 
 -- 4. TRANSACTION LINE ITEMS TABLE
 create table if not exists public.transaction_items (
@@ -70,8 +74,17 @@ create table if not exists public.shop_settings (
   phone text not null default '+91 98765 43210 / 044-23456789',
   gstin text default '33ABCDE1234F1Z5',
   footer_message text not null default 'Thank you for shopping at UMA FOOTWEARS! Goods once sold can be exchanged within 7 days with valid receipt.',
+  ledger_columns jsonb default '["billNoDate","customer","itemsBilled","payment","billedBy","amount"]'::jsonb,
+  custom_columns jsonb default '[]'::jsonb,
+  column_labels jsonb default '{}'::jsonb,
   updated_at timestamptz default now()
 );
+
+-- Safe migration if shop_settings already exists
+alter table public.shop_settings add column if not exists ledger_columns jsonb default '["billNoDate","customer","itemsBilled","payment","billedBy","amount"]'::jsonb;
+alter table public.shop_settings add column if not exists custom_columns jsonb default '[]'::jsonb;
+alter table public.shop_settings add column if not exists column_labels jsonb default '{}'::jsonb;
+
 
 -- Ensure only 1 row exists for shop_settings
 insert into public.shop_settings (id, shop_name, tagline, address, phone, gstin, footer_message)
@@ -138,48 +151,55 @@ begin
 end;
 $$ language plpgsql security definer;
 
--- 7. INITIAL FOOTWEAR CATALOG SEEDING (Only if table is empty)
+-- 7. INITIAL FOOTWEAR CATALOG SEEDING (39 Products)
 insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-SP-01', 'Air Sprint Sports Running Shoes', 'Sports', 1899, 1150, 10, 45,
-  '[{"name": "Black/Red", "hex": "#ef4444"}, {"name": "Navy Blue", "hex": "#1e3a8a"}, {"name": "All Black", "hex": "#09090b"}, {"name": "Grey/Neon", "hex": "#84cc16"}]'::jsonb,
-  '["6", "7", "8", "9", "10", "11"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-SP-01');
-
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-FM-02', 'Classic Genuine Leather Oxford', 'Formal', 2499, 1550, 15, 30,
-  '[{"name": "Tan Brown", "hex": "#78350f"}, {"name": "Jet Black", "hex": "#18181b"}, {"name": "Cherry Wood", "hex": "#451a03"}]'::jsonb,
-  '["6", "7", "8", "9", "10", "11"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-FM-02');
-
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-SN-03', 'Urban Street Canvas Sneakers', 'Casual', 1299, 780, 10, 60,
-  '[{"name": "Pure White", "hex": "#f8fafc"}, {"name": "Olive Green", "hex": "#3f6212"}, {"name": "Midnight Black", "hex": "#0f172a"}]'::jsonb,
-  '["6", "7", "8", "9", "10"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-SN-03');
-
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-SD-04', 'Comfort Grip Leather Sandals', 'Sandals', 999, 580, 5, 50,
-  '[{"name": "Dark Brown", "hex": "#582f0e"}, {"name": "Tan", "hex": "#9a7b56"}, {"name": "Black", "hex": "#18181b"}]'::jsonb,
-  '["6", "7", "8", "9", "10"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-SD-04');
-
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-FF-05', 'Soft Cushion Daily Flip Flops', 'Slippers', 399, 210, 0, 100,
-  '[{"name": "Royal Blue", "hex": "#2563eb"}, {"name": "Teal", "hex": "#0d9488"}, {"name": "Graphite Grey", "hex": "#4b5563"}]'::jsonb,
-  '["5", "6", "7", "8", "9", "10"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-FF-05');
-
-insert into public.products (code, name, category, price, wholesale_price, discount_percent, stock, colors, sizes)
-select 
-  'UMA-HL-06', 'Elegance Block Heel Pumps', 'Women', 1599, 920, 12, 35,
-  '[{"name": "Rose Gold", "hex": "#fb7185"}, {"name": "Metallic Silver", "hex": "#cbd5e1"}, {"name": "Matte Black", "hex": "#27272a"}]'::jsonb,
-  '["4", "5", "6", "7", "8"]'::jsonb
-where not exists (select 1 from public.products where code = 'UMA-HL-06');
+values
+  ('N1-WU1020', 'WALKARO WU1020', 'WALKARO', 629, 415.14, 0, 1, '[{"name": "Standard"}]'::jsonb, '["10"]'::jsonb),
+  ('N1-1721G', 'PARAGON 1721G', 'PARAGON', 205, 143.5, 0, 1, '[{"name": "Standard"}]'::jsonb, '["9"]'::jsonb),
+  ('N2-X PRO', 'APL X PRO', 'APL', 399.9, 271.93, 0, 5, '[{"name": "Standard"}]'::jsonb, '["8","9","10"]'::jsonb),
+  ('N3-JC1150', 'JIVERS JC1150', 'JIVERS', 239, 167.3, 0, 1, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N4-1129G', 'PARAGON 1129G', 'PARAGON', 177, 123.9, 0, 1, '[{"name": "Standard"}]'::jsonb, '["10"]'::jsonb),
+  ('N6-BX1256', 'WALKARO BX1256', 'WALKARO', 224.5, 157.15, 0, 2, '[{"name": "Standard"}]'::jsonb, '["8","9"]'::jsonb),
+  ('N7-GP4077', 'VKC GP4077', 'VKC', 309, 203.94, 0, 8, '[{"name": "Standard"}]'::jsonb, '["7","8","9","10"]'::jsonb),
+  ('N8-WG5007', 'WALKARO WG5007', 'WALKARO', 269, 177.54, 0, 2, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N9-TYPE 1', 'AIR FAX TYPE 1', 'AIR FAX', 485, 300.7, 0, 2, '[{"name": "Standard"}]'::jsonb, '["7","8"]'::jsonb),
+  ('N10-T2055', 'ODYSSIA TUFA T2055', 'ODYSSIA TUFA', 699, 475.32, 0, 3, '[{"name": "Standard"}]'::jsonb, '["9","10"]'::jsonb),
+  ('N11-3325', 'MARK 3325', 'MARK', 339, 223.74, 0, 2, '[{"name": "Standard"}]'::jsonb, '["7","10"]'::jsonb),
+  ('N12-WG5002', 'WALKARO WG5002', 'WALKARO', 299, 194.35, 0, 7, '[{"name": "Standard"}]'::jsonb, '["6","7","8"]'::jsonb),
+  ('N13-GM5511', 'WALKARO GM5511', 'WALKARO', 249, 161.85, 0, 5, '[{"name": "Standard"}]'::jsonb, '["7","8","9","10"]'::jsonb),
+  ('N14-WGR50044', 'WALKARO WGR50044', 'WALKARO', 309, 200.85, 0, 1, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N15-GP4216', 'VKC GP4216', 'VKC', 279, 184.14, 0, 3, '[{"name": "Standard"}]'::jsonb, '["7","10"]'::jsonb),
+  ('N17-SFG4018', 'SPARX SFG4018', 'SPARX', 399.5, 271.66, 0, 3, '[{"name": "Standard"}]'::jsonb, '["8","9","10"]'::jsonb),
+  ('N18-W1030', 'WALKARO W1030', 'WALKARO', 309, 200.85, 0, 1, '[{"name": "Standard"}]'::jsonb, '["9"]'::jsonb),
+  ('N20-GP4203', 'VKC GP4203', 'VKC', 279, 184.14, 0, 2, '[{"name": "Standard"}]'::jsonb, '["9","10"]'::jsonb),
+  ('N22-BX1260', 'WALKARO BX1260', 'WALKARO', 259.5, 168.68, 0, 6, '[{"name": "Standard"}]'::jsonb, '["7","8","9","10"]'::jsonb),
+  ('N23-BG1410', 'AQUALITE BG1410', 'AQUALITE', 349.5, 244.65, 0, 2, '[{"name": "Standard"}]'::jsonb, '["9","10"]'::jsonb),
+  ('N24-LP1042', 'VKC LP1042', 'VKC', 339, 223.74, 0, 3, '[{"name": "Standard"}]'::jsonb, '["6","7","9"]'::jsonb),
+  ('N26-1753G', 'PARAGON 1753G', 'PARAGON', 229.5, 160.65, 0, 13, '[{"name": "Standard"}]'::jsonb, '["6","7","8","9","10"]'::jsonb),
+  ('N26-AL621P', 'AQUALITE AL621P', 'AQUALITE', 279.5, 195.65, 0, 2, '[{"name": "Standard"}]'::jsonb, '["8","9"]'::jsonb),
+  ('N27-BER1', 'BERSACHE BER1', 'BERSACHE', 300, 195, 0, 2, '[{"name": "Standard"}]'::jsonb, '["7","10"]'::jsonb),
+  ('N28-GP4551', 'VKC GP4551', 'VKC', 316, 208.56, 0, 5, '[{"name": "Standard"}]'::jsonb, '["8","9","10"]'::jsonb),
+  ('N29-WC8767', 'WALKARO WC8767', 'WALKARO', 379, 246.35, 0, 2, '[{"name": "Standard"}]'::jsonb, '["7","10"]'::jsonb),
+  ('N30-WGB53232', 'WALKARO WGB53232', 'WALKARO', 269.5, 188.65, 0, 6, '[{"name": "Standard"}]'::jsonb, '["7","8","9","10"]'::jsonb),
+  ('N32-GP4258', 'VKC GP4258', 'VKC', 359, 236.94, 0, 5, '[{"name": "Standard"}]'::jsonb, '["7","8","9","10"]'::jsonb),
+  ('N33-WG5661', 'WALKARO WG5661', 'WALKARO', 384, 249.6, 0, 3, '[{"name": "Standard"}]'::jsonb, '["6","8","10"]'::jsonb),
+  ('N34-DG9163', 'VKC DG9163', 'VKC', 319, 210.54, 0, 2, '[{"name": "Standard"}]'::jsonb, '["7","8"]'::jsonb),
+  ('N35-WGR53383', 'WALKARO WGR53383', 'WALKARO', 299, 194.35, 0, 3, '[{"name": "Standard"}]'::jsonb, '["8","10"]'::jsonb),
+  ('N37-GP4103', 'VKC GP4103', 'VKC', 259, 170.94, 0, 2, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N38-NV35', 'AEROWALK NV35', 'AEROWALK', 369, 254.61, 0, 2, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N40-WS9132', 'WALKARO WS9132', 'WALKARO', 1099, 549.5, 0, 1, '[{"name": "Standard"}]'::jsonb, '["8"]'::jsonb),
+  ('N42-ASICS', 'ADUTE ASICS', 'ADUTE', 600, 390, 0, 1, '[{"name": "Standard"}]'::jsonb, '["10"]'::jsonb),
+  ('N43-137', 'NAYASHA 137', 'NAYASHA', 550, 335.5, 0, 10, '[{"name": "Standard"}]'::jsonb, '["6","7","8","9","10"]'::jsonb),
+  ('N44-DG55152', 'VKC DG55152', 'VKC', 799, 519.35, 0, 3, '[{"name": "Standard"}]'::jsonb, '["7","8","10"]'::jsonb),
+  ('N46-CAPTAIN13', 'ASIAN CAPTAIN13', 'ASIAN', 649, 395.89, 0, 2, '[{"name": "Standard"}]'::jsonb, '["6","9"]'::jsonb),
+  ('N48-ATI', 'ADUTE ATI', 'ADUTE', 650, 422.5, 0, 2, '[{"name": "Standard"}]'::jsonb, '["10"]'::jsonb)
+on conflict (code) do update set
+  name = excluded.name,
+  category = excluded.category,
+  price = excluded.price,
+  wholesale_price = excluded.wholesale_price,
+  stock = excluded.stock,
+  sizes = excluded.sizes;
 
 -- 8. ROW LEVEL SECURITY (RLS) POLICIES
 -- Enable RLS on all tables
@@ -195,6 +215,9 @@ create policy "Allow all actions on sales_transactions" on public.sales_transact
 create policy "Allow all actions on transaction_items" on public.transaction_items for all using (true) with check (true);
 create policy "Allow all actions on shop_settings" on public.shop_settings for all using (true) with check (true);
 
--- 9. ENABLE SUPABASE REALTIME REPLICATION (For live stock updates across devices)
+-- 9. ENABLE SUPABASE REALTIME REPLICATION (For live stock, transactions & settings updates across devices)
 alter publication supabase_realtime add table public.products;
 alter publication supabase_realtime add table public.sales_transactions;
+alter publication supabase_realtime add table public.transaction_items;
+alter publication supabase_realtime add table public.shop_settings;
+

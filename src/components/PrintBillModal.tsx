@@ -115,12 +115,12 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                       <div className="font-bold text-gray-900">{item.productName}</div>
                       <div className="text-[9px] text-gray-500 font-medium">Size: {item.size || item.color}</div>
                       {item.discountPercent > 0 && (
-                        <div className="text-[8px] text-emerald-700">MRP ₹{item.price} (-{item.discountPercent}%)</div>
+                        <div className="text-[8px] text-emerald-700">MRP ₹{Number(item.price).toFixed(2)} (-{item.discountPercent}%)</div>
                       )}
                     </td>
                     <td className="py-1 text-center font-mono">{item.quantity}</td>
-                    <td className="py-1 text-right font-mono">₹{item.discountedPrice}</td>
-                    <td className="py-1 text-right font-bold font-mono">₹{item.totalPrice}</td>
+                    <td className="py-1 text-right font-mono">₹{Number(item.discountedPrice).toFixed(2)}</td>
+                    <td className="py-1 text-right font-bold font-mono">₹{Number(item.totalPrice).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

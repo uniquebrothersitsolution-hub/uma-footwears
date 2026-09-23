@@ -2,15 +2,17 @@ import React, { useState, useMemo } from 'react';
 import { FileSpreadsheet, X, Calendar, Download, CheckCircle2, AlertCircle } from 'lucide-react';
 import { SaleTransaction } from '../types';
 import { ExportExcelService, ExportPeriod } from '../services/exportExcel';
+import { StorageService } from '../services/storage';
 import { useAuth } from '../context/AuthContext';
 
 interface ExcelExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   transactions: SaleTransaction[];
+  visibleColumnIds?: string[];
 }
 
-export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onClose, transactions }) => {
+export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onClose, transactions, visibleColumnIds }) => {
   const { shopSettings } = useAuth();
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -43,6 +45,11 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onCl
   const handleExport = () => {
     if (filteredData.length === 0) return;
 
+    const cols = visibleColumnIds && visibleColumnIds.length > 0 
+      ? visibleColumnIds 
+      : StorageService.getLedgerColumns();
+    const customCols = StorageService.getCustomColumns();
+
     const result = ExportExcelService.exportSalesToExcel(
       transactions,
       {
@@ -51,7 +58,9 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onCl
         month: selectedMonth,
         year: selectedYear
       },
-      shopSettings.shopName || 'UMA FOOTWEARS'
+      shopSettings.shopName || 'UMA FOOTWEARS',
+      cols,
+      customCols
     );
 
     setExportFeedback(`Successfully exported ${result.count} bills to ${result.filename}!`);
