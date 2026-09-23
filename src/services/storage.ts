@@ -834,37 +834,55 @@ export const StorageService = {
         return this.getTransactions();
       }
 
-      const transactions: SaleTransaction[] = data.map((tx: any) => ({
-        id: tx.id,
-        billNo: tx.bill_no,
-        timestamp: tx.timestamp,
-        customerName: tx.customer_name || '',
-        customerPhone: tx.customer_phone || '',
-        paymentMode: tx.payment_mode,
-        subtotal: Number(tx.subtotal),
-        totalDiscount: Number(tx.total_discount),
-        finalAmount: Number(tx.final_amount),
-        splitDetails: tx.split_details || undefined,
-        staffUsername: tx.staff_username,
-        customFields: tx.custom_fields || {},
-        items: (tx.transaction_items || []).map((item: any) => ({
-          id: item.id,
-          productId: item.product_id || item.product_code || 'prod-1',
-          productName: item.product_name,
-          color: item.color || '',
-          size: item.size || '',
-          price: Number(item.price),
-          wholesalePrice: Number(item.wholesale_price || 0),
-          discountPercent: item.price > 0 ? Number((((item.price - item.discounted_price) / item.price) * 100).toFixed(2)) : 0,
-          discountedPrice: Number(item.discounted_price),
-          quantity: Number(item.quantity),
-          totalPrice: Number(item.total_price)
-        }))
-      }));
+      const transactions: SaleTransaction[] = data.map((tx: any) => {
+        const rawSplit = tx.split_details;
+        const customFields = tx.custom_fields || rawSplit?.__custom_fields || {};
+        let splitDetails: { cash: number; upi: number } | undefined = undefined;
+        if (rawSplit && (rawSplit.cash !== undefined || rawSplit.upi !== undefined)) {
+          splitDetails = {
+            cash: Number(rawSplit.cash || 0),
+            upi: Number(rawSplit.upi || 0)
+          };
+        }
 
-      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
+        return {
+          id: tx.id,
+          billNo: tx.bill_no,
+          timestamp: tx.timestamp,
+          customerName: tx.customer_name || '',
+          customerPhone: tx.customer_phone || '',
+          paymentMode: tx.payment_mode,
+          subtotal: Number(tx.subtotal),
+          totalDiscount: Number(tx.total_discount),
+          finalAmount: Number(tx.final_amount),
+          splitDetails,
+          staffUsername: tx.staff_username,
+          customFields,
+          items: (tx.transaction_items || []).map((item: any) => ({
+            id: item.id,
+            productId: item.product_id || item.product_code || 'prod-1',
+            productName: item.product_name,
+            color: item.color || '',
+            size: item.size || '',
+            price: Number(item.price),
+            wholesalePrice: Number(item.wholesale_price || 0),
+            discountPercent: item.price > 0 ? Number((((item.price - item.discounted_price) / item.price) * 100).toFixed(2)) : 0,
+            discountedPrice: Number(item.discounted_price),
+            quantity: Number(item.quantity),
+            totalPrice: Number(item.total_price)
+          }))
+        };
+      });
+
+      // Merge cloud transactions with any local transactions that haven't reached cloud yet
+      const local = this.getTransactions();
+      const cloudBillNos = new Set(transactions.map(t => t.billNo));
+      const unsyncedLocal = local.filter(t => !cloudBillNos.has(t.billNo));
+      const mergedTransactions = [...transactions, ...unsyncedLocal];
+
+      localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(mergedTransactions));
       this.emitDataChange();
-      return transactions;
+      return mergedTransactions;
     } catch (e) {
       console.error('Error fetching cloud transactions:', e);
       return this.getTransactions();
@@ -877,13 +895,15 @@ export const StorageService = {
 
   saveTransaction(transaction: SaleTransaction): SaleTransaction[] {
     const transactions = this.getTransactions();
-    const updated = [transaction, ...transactions];
+    const filtered = transactions.filter(t => t.billNo !== transaction.billNo);
+    const updated = [transaction, ...filtered];
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
+    this.emitDataChange();
 
     // Deduct stock for sold items locally
     const products = this.getProducts();
     const updatedProducts = products.map(p => {
-      const soldItem = transaction.items.find(i => i.productId === p.id || i.productId === p.code);
+      const soldItem = transaction.items.find(i => i.productId === p.id || i.productId === p.code || i.productName === p.name);
       if (soldItem) {
         return { ...p, stock: Math.max(0, p.stock - soldItem.quantity) };
       }
@@ -897,23 +917,50 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const { data: txData, error: txError } = await client
+            const splitPayload = {
+              ...(transaction.splitDetails || {}),
+              ...(transaction.customFields && Object.keys(transaction.customFields).length > 0 ? { __custom_fields: transaction.customFields } : {})
+            };
+
+            const basePayload: any = {
+              bill_no: transaction.billNo,
+              timestamp: transaction.timestamp,
+              customer_name: transaction.customerName || null,
+              customer_phone: transaction.customerPhone || null,
+              payment_mode: transaction.paymentMode,
+              subtotal: transaction.subtotal,
+              total_discount: transaction.totalDiscount,
+              final_amount: transaction.finalAmount,
+              split_details: Object.keys(splitPayload).length > 0 ? splitPayload : null,
+              staff_username: transaction.staffUsername
+            };
+
+            let txData: any = null;
+            let txError: any = null;
+
+            // Attempt insert with custom_fields first
+            const resWithCustom = await client
               .from('sales_transactions')
               .insert({
-                bill_no: transaction.billNo,
-                timestamp: transaction.timestamp,
-                customer_name: transaction.customerName || null,
-                customer_phone: transaction.customerPhone || null,
-                payment_mode: transaction.paymentMode,
-                subtotal: transaction.subtotal,
-                total_discount: transaction.totalDiscount,
-                final_amount: transaction.finalAmount,
-                split_details: transaction.splitDetails || null,
-                staff_username: transaction.staffUsername,
+                ...basePayload,
                 custom_fields: transaction.customFields || {}
               })
               .select('id')
               .single();
+
+            if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
+              // custom_fields column not present in schema, fallback to basePayload (stored safely in split_details.__custom_fields)
+              const fallbackRes = await client
+                .from('sales_transactions')
+                .insert(basePayload)
+                .select('id')
+                .single();
+              txData = fallbackRes.data;
+              txError = fallbackRes.error;
+            } else {
+              txData = resWithCustom.data;
+              txError = resWithCustom.error;
+            }
 
             if (txError || !txData) {
               console.error('Cloud transaction sync error:', txError);
@@ -1376,10 +1423,25 @@ export const StorageService = {
         if (target) {
           (async () => {
             try {
-              await client
+              const splitPayload = {
+                ...(target.splitDetails || {}),
+                __custom_fields: target.customFields || {}
+              };
+
+              const resWithCustom = await client
                 .from('sales_transactions')
-                .update({ custom_fields: target.customFields || {} })
+                .update({
+                  custom_fields: target.customFields || {},
+                  split_details: splitPayload
+                })
                 .or(`id.eq.${txId},bill_no.eq.${txId}`);
+
+              if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
+                await client
+                  .from('sales_transactions')
+                  .update({ split_details: splitPayload })
+                  .or(`id.eq.${txId},bill_no.eq.${txId}`);
+              }
             } catch (err) {
               console.warn('Error saving transaction custom field to cloud:', err);
             }
@@ -1591,23 +1653,48 @@ export const StorageService = {
           .maybeSingle();
 
         if (!existing) {
-          const { data: newTx, error: txErr } = await client
+          const splitPayload = {
+            ...(tx.splitDetails || {}),
+            ...(tx.customFields && Object.keys(tx.customFields).length > 0 ? { __custom_fields: tx.customFields } : {})
+          };
+
+          const basePayload: any = {
+            bill_no: tx.billNo,
+            timestamp: tx.timestamp,
+            customer_name: tx.customerName || null,
+            customer_phone: tx.customerPhone || null,
+            payment_mode: tx.paymentMode,
+            subtotal: tx.subtotal,
+            total_discount: tx.totalDiscount,
+            final_amount: tx.finalAmount,
+            split_details: Object.keys(splitPayload).length > 0 ? splitPayload : null,
+            staff_username: tx.staffUsername
+          };
+
+          let newTx: any = null;
+          let txErr: any = null;
+
+          const resWithCustom = await client
             .from('sales_transactions')
             .insert({
-              bill_no: tx.billNo,
-              timestamp: tx.timestamp,
-              customer_name: tx.customerName || null,
-              customer_phone: tx.customerPhone || null,
-              payment_mode: tx.paymentMode,
-              subtotal: tx.subtotal,
-              total_discount: tx.totalDiscount,
-              final_amount: tx.finalAmount,
-              split_details: tx.splitDetails || null,
-              staff_username: tx.staffUsername,
+              ...basePayload,
               custom_fields: tx.customFields || {}
             })
             .select('id')
             .single();
+
+          if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
+            const fallbackRes = await client
+              .from('sales_transactions')
+              .insert(basePayload)
+              .select('id')
+              .single();
+            newTx = fallbackRes.data;
+            txErr = fallbackRes.error;
+          } else {
+            newTx = resWithCustom.data;
+            txErr = resWithCustom.error;
+          }
 
           if (!txErr && newTx) {
             txCount++;

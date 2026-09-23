@@ -178,8 +178,8 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     if (cartItems.length === 0) return;
 
     const billNo = 'UMA-' + Math.floor(100000 + Math.random() * 900000);
-    const cash = typeof splitCashAmount === 'number' ? splitCashAmount : 0;
-    const upi = typeof splitUpiAmount === 'number' ? splitUpiAmount : 0;
+    const cash = typeof splitCashAmount === 'number' ? splitCashAmount : (parseFloat(String(splitCashAmount)) || 0);
+    const upi = typeof splitUpiAmount === 'number' ? splitUpiAmount : (parseFloat(String(splitUpiAmount)) || 0);
 
     const transaction: SaleTransaction = {
       id: 'tx-' + Date.now(),
