@@ -1171,7 +1171,7 @@ export const StorageService = {
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch {}
     }
-    return ['billNoDate', 'customer', 'itemsBilled', 'payment', 'billedBy', 'amount'];
+    return ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
   },
 
   saveLedgerColumns(columns: string[]): void {
@@ -1283,7 +1283,7 @@ export const StorageService = {
   },
 
   resetColumns(): void {
-    const defaultIds = ['billNoDate', 'customer', 'itemsBilled', 'payment', 'billedBy', 'amount'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
     localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(defaultIds));
     // Clear all labels AND deleted markers
     localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify({}));
@@ -1377,9 +1377,9 @@ export const StorageService = {
       return labels[staffVisibilityKey] === 'true';
     }
 
-    // Built-in columns with adminOnly are not staff visible by default
+    // Built-in columns: check explicit staffVisible flag, then adminOnly
     const builtInCol = BUILTIN_LEDGER_COLUMNS.find((c) => c.id === colId);
-    if (builtInCol?.adminOnly) {
+    if (builtInCol?.staffVisible === false || builtInCol?.adminOnly) {
       return false;
     }
 

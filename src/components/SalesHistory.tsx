@@ -685,6 +685,117 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
 
                       // Built-in system columns
                       switch (colId) {
+                        case 'pNo':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                              <input
+                                type="text"
+                                defaultValue={tx.customFields?.['pNo'] ?? ''}
+                                placeholder="P No..."
+                                onBlur={(e) => handleCellChange(tx.id, 'pNo', e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-mono font-bold text-[#1E1B4B] focus:outline-none transition"
+                              />
+                            </td>
+                          );
+
+                        case 'articleNo':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                              <input
+                                type="text"
+                                defaultValue={tx.customFields?.['articleNo'] ?? ''}
+                                placeholder="Article..."
+                                onBlur={(e) => handleCellChange(tx.id, 'articleNo', e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                              />
+                            </td>
+                          );
+
+                        case 'mrp':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="flex items-center">
+                                <span className="text-[#64748B] text-xs font-semibold mr-1">₹</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  defaultValue={tx.customFields?.['mrp'] ?? ''}
+                                  placeholder="0.00"
+                                  onBlur={(e) => handleCellChange(tx.id, 'mrp', e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                  className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                                />
+                              </div>
+                            </td>
+                          );
+
+                        case 'brand':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                              <input
+                                type="text"
+                                defaultValue={tx.customFields?.['brand'] ?? ''}
+                                placeholder="Brand..."
+                                onBlur={(e) => handleCellChange(tx.id, 'brand', e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                              />
+                            </td>
+                          );
+
+                        case 'wholeSalePct':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="flex items-center">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  defaultValue={tx.customFields?.['wholeSalePct'] ?? ''}
+                                  placeholder="0"
+                                  onBlur={(e) => handleCellChange(tx.id, 'wholeSalePct', e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                  className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-amber-700 focus:outline-none transition"
+                                />
+                                <span className="text-amber-700 text-xs font-semibold ml-0.5">%</span>
+                              </div>
+                            </td>
+                          );
+
+                        case 'wholeSaleValue':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="flex items-center">
+                                <span className="text-amber-700 text-xs font-semibold mr-1">₹</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  defaultValue={tx.customFields?.['wholeSaleValue'] ?? ''}
+                                  placeholder="0.00"
+                                  onBlur={(e) => handleCellChange(tx.id, 'wholeSaleValue', e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                  className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-amber-700 focus:outline-none transition"
+                                />
+                              </div>
+                            </td>
+                          );
+
+                        case 'sizeAvailable':
+                          return (
+                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <input
+                                type="number"
+                                step="1"
+                                defaultValue={tx.customFields?.['sizeAvailable'] ?? ''}
+                                placeholder="0"
+                                onBlur={(e) => handleCellChange(tx.id, 'sizeAvailable', e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                              />
+                            </td>
+                          );
+
                         case 'billNoDate':
                           return (
                             <td key={colId} className="py-3.5 px-4 whitespace-nowrap">

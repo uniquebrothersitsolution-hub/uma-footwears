@@ -74,16 +74,24 @@ create table if not exists public.shop_settings (
   phone text not null default '+91 98765 43210 / 044-23456789',
   gstin text default '33ABCDE1234F1Z5',
   footer_message text not null default 'Thank you for shopping at UMA FOOTWEARS! Goods once sold can be exchanged within 7 days with valid receipt.',
-  ledger_columns jsonb default '["billNoDate","customer","itemsBilled","payment","billedBy","amount"]'::jsonb,
+  ledger_columns jsonb default '["billNoDate","pNo","articleNo","mrp","brand","wholeSalePct","wholeSaleValue","sizeAvailable"]'::jsonb,
   custom_columns jsonb default '[]'::jsonb,
   column_labels jsonb default '{}'::jsonb,
   updated_at timestamptz default now()
 );
 
 -- Safe migration if shop_settings already exists
-alter table public.shop_settings add column if not exists ledger_columns jsonb default '["billNoDate","customer","itemsBilled","payment","billedBy","amount"]'::jsonb;
+alter table public.shop_settings add column if not exists ledger_columns jsonb default '["billNoDate","pNo","articleNo","mrp","brand","wholeSalePct","wholeSaleValue","sizeAvailable"]'::jsonb;
 alter table public.shop_settings add column if not exists custom_columns jsonb default '[]'::jsonb;
 alter table public.shop_settings add column if not exists column_labels jsonb default '{}'::jsonb;
+
+-- Apply the correct column order to any existing row (run this to fix existing deployments)
+UPDATE public.shop_settings
+SET
+  ledger_columns = '["billNoDate","pNo","articleNo","mrp","brand","wholeSalePct","wholeSaleValue","sizeAvailable"]'::jsonb,
+  column_labels = '{}'::jsonb,
+  updated_at = now()
+WHERE id = 1;
 
 
 -- Ensure only 1 row exists for shop_settings

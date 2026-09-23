@@ -11,27 +11,37 @@ export interface ExportFilterOptions {
 }
 
 export const BUILTIN_LEDGER_COLUMNS: LedgerColumnConfig[] = [
-  { id: 'billNoDate', label: 'BILL # & DATE', dataType: 'date', defaultVisible: true },
-  { id: 'customer', label: 'CUSTOMER', dataType: 'text', defaultVisible: true },
-  { id: 'itemsBilled', label: 'ITEMS BILLED', dataType: 'text', defaultVisible: true },
-  { id: 'payment', label: 'PAYMENT', dataType: 'tag', defaultVisible: true },
-  { id: 'billedBy', label: 'BILLED BY', dataType: 'text', defaultVisible: true },
-  { id: 'amount', label: 'AMOUNT', dataType: 'currency', defaultVisible: true },
-  { id: 'subtotal', label: 'MRP SUBTOTAL (₹)', dataType: 'currency', defaultVisible: false },
-  { id: 'discount', label: 'DISCOUNT SAVED (₹)', dataType: 'currency', defaultVisible: false },
-  { id: 'wholesale', label: 'WHOLESALE COST (₹)', dataType: 'currency', defaultVisible: false, adminOnly: true },
-  { id: 'profit', label: 'NET PROFIT (₹)', dataType: 'currency', defaultVisible: false, adminOnly: true },
+  { id: 'billNoDate', label: 'BILL # & DATE', dataType: 'date', defaultVisible: true, staffVisible: true },
+  { id: 'pNo', label: 'P NO', dataType: 'text', defaultVisible: true, staffVisible: true },
+  { id: 'articleNo', label: 'ARTICLE NO', dataType: 'text', defaultVisible: true, staffVisible: true },
+  { id: 'mrp', label: 'MRP', dataType: 'currency', defaultVisible: true, staffVisible: true },
+  { id: 'brand', label: 'BRAND', dataType: 'text', defaultVisible: true, staffVisible: true },
+  { id: 'wholeSalePct', label: 'WHOLE SALE %', dataType: 'number', defaultVisible: true, staffVisible: false, adminOnly: true },
+  { id: 'wholeSaleValue', label: 'WHOLE SALE VALUE', dataType: 'currency', defaultVisible: true, staffVisible: false, adminOnly: true },
+  { id: 'sizeAvailable', label: 'SIZE AVAILABLE', dataType: 'number', defaultVisible: true, staffVisible: true },
+  // Legacy columns (hidden by default, can be re-enabled via Manage Columns)
+  { id: 'customer', label: 'CUSTOMER', dataType: 'text', defaultVisible: false, staffVisible: true },
+  { id: 'itemsBilled', label: 'ITEMS BILLED', dataType: 'text', defaultVisible: false, staffVisible: true },
+  { id: 'payment', label: 'PAYMENT', dataType: 'tag', defaultVisible: false, staffVisible: true },
+  { id: 'billedBy', label: 'BILLED BY', dataType: 'text', defaultVisible: false, staffVisible: true },
+  { id: 'amount', label: 'AMOUNT', dataType: 'currency', defaultVisible: false, staffVisible: true },
+  { id: 'subtotal', label: 'MRP SUBTOTAL (₹)', dataType: 'currency', defaultVisible: false, staffVisible: true },
+  { id: 'discount', label: 'DISCOUNT SAVED (₹)', dataType: 'currency', defaultVisible: false, staffVisible: true },
+  { id: 'wholesale', label: 'WHOLESALE COST (₹)', dataType: 'currency', defaultVisible: false, adminOnly: true, staffVisible: false },
+  { id: 'profit', label: 'NET PROFIT (₹)', dataType: 'currency', defaultVisible: false, adminOnly: true, staffVisible: false },
 ];
 
 export const ALL_LEDGER_COLUMNS = BUILTIN_LEDGER_COLUMNS;
 
 export const DEFAULT_VISIBLE_COLUMN_IDS = [
   'billNoDate',
-  'customer',
-  'itemsBilled',
-  'payment',
-  'billedBy',
-  'amount'
+  'pNo',
+  'articleNo',
+  'mrp',
+  'brand',
+  'wholeSalePct',
+  'wholeSaleValue',
+  'sizeAvailable',
 ];
 
 export const ExportExcelService = {
