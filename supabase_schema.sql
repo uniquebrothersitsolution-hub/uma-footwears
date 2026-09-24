@@ -66,6 +66,8 @@ create table if not exists public.transaction_items (
 -- Safe migration if transaction_items table already exists
 alter table public.transaction_items add column if not exists size text not null default '';
 alter table public.transaction_items add column if not exists brand text not null default '';
+alter table public.transaction_items add column if not exists type text not null default '';
+alter table public.transaction_items alter column product_id drop not null;
 
 -- 5. SHOP SETTINGS TABLE
 create table if not exists public.shop_settings (

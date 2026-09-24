@@ -615,17 +615,24 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                   return items.map((item, itemIdx) => {
                     const isFirstItem = itemIdx === 0;
 
-                    // Look up full Product object for this item (by id, code, or name)
-                    const matchedProduct: Product | undefined =
+                    // Look up full Product object for this item (by id, code, name, or catalog price fallback)
+                    let matchedProduct: Product | undefined =
                       products.find(p => p.id === item.productId) ||
                       products.find(p => p.code === item.productId) ||
                       (item.productId ? products.find(p => p.code && p.code.toLowerCase() === item.productId.toLowerCase()) : undefined) ||
-                      products.find(p => item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase());
+                      products.find(p => item.productName && item.productName.toLowerCase() !== 'unknown' && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase());
+
+                    // If product is still unknown or placeholder, auto-resolve against product catalog by price
+                    if (!matchedProduct && (!item.productName || item.productName.toLowerCase() === 'unknown' || !item.productId)) {
+                      const targetPrice = item.price > 0 ? item.price : (tx.subtotal || tx.finalAmount);
+                      matchedProduct = products.find(p => Math.abs(p.price - targetPrice) < 0.01) ||
+                                       products.find(p => Math.abs(p.price - targetPrice) < 0.5);
+                    }
 
                     // Use product catalog data as the source of truth; fall back to item data
                     const pCode   = matchedProduct?.code || (item.productId && !item.productId.startsWith('item-') && !item.productId.startsWith('custom-') ? item.productId : '—');
                     const pBrand  = item.brand || matchedProduct?.category || '';
-                    const pName   = matchedProduct?.name || item.productName || '';
+                    const pName   = (item.productName && item.productName.toLowerCase() !== 'unknown') ? item.productName : (matchedProduct?.name || item.productName || '');
                     const pMRP    = matchedProduct?.price ?? (item.price || 0);
                     const pWS     = matchedProduct?.wholesalePrice ?? (item.wholesalePrice || 0);
 

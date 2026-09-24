@@ -1,6 +1,6 @@
-import { Product, SaleTransaction, UserAccount, ShopSettings, LedgerColumnConfig, ColumnDataType } from '../types';
+import { Product, SaleTransaction, BillItem, UserAccount, ShopSettings, LedgerColumnConfig, ColumnDataType } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient';
-import { BUILTIN_LEDGER_COLUMNS } from './exportExcel';
+import { BUILTIN_LEDGER_COLUMNS, deriveFootwearType } from './exportExcel';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'uma_footwears_products',
@@ -12,6 +12,12 @@ const STORAGE_KEYS = {
   CUSTOM_COLUMNS: 'uma_footwears_custom_columns',
   COLUMN_LABELS: 'uma_footwears_column_labels',
 };
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function toValidUuidOrNull(val?: string | null): string | null {
+  if (typeof val === 'string' && UUID_REGEX.test(val)) return val;
+  return null;
+}
 
 // Initial Seed Data for UMA FOOTWEARS
 const INITIAL_PRODUCTS: Product[] = [
@@ -848,13 +854,102 @@ export const StorageService = {
   // ==========================================
   // TRANSACTIONS / SALES
   // ==========================================
+  healTransactionItems(billNo: string, amount: number, allProducts: Product[]): BillItem[] {
+    if (amount <= 0 || !allProducts || allProducts.length === 0) return [];
+    // Match product with exact or very close price
+    const prod = allProducts.find(p => Math.abs(p.price - amount) < 0.01) ||
+                 allProducts.find(p => Math.abs(p.price - amount) < 0.5);
+    if (!prod) return [];
+
+    const derivedBrand = prod.category || prod.name.trim().split(' ')[0] || '';
+    const derivedType = prod.type || deriveFootwearType(undefined, prod);
+    const derivedSize = prod.sizes && prod.sizes.length > 0 ? prod.sizes[0] : '8';
+    const derivedColor = prod.colors && prod.colors.length > 0 ? prod.colors[0].name : 'Standard';
+
+    return [{
+      id: `item-${billNo}-repaired`,
+      productId: prod.code || prod.id,
+      productName: prod.name,
+      brand: derivedBrand,
+      type: derivedType,
+      color: derivedColor,
+      size: derivedSize,
+      price: prod.price,
+      wholesalePrice: prod.wholesalePrice || 0,
+      discountPercent: 0,
+      discountedPrice: amount || prod.price,
+      quantity: 1,
+      totalPrice: amount || prod.price
+    }];
+  },
+
   getTransactions(): SaleTransaction[] {
     const data = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
     if (!data) return [];
     try {
-      return JSON.parse(data);
+      const list: SaleTransaction[] = JSON.parse(data);
+      if (!Array.isArray(list)) return [];
+
+      let needsRewrite = false;
+      const allProducts = this.getProducts();
+      const healedList = list.map(tx => {
+        const hasBadItems = !tx.items || tx.items.length === 0 || tx.items.every(i => !i.productName || i.productName.toLowerCase() === 'unknown');
+        if (hasBadItems) {
+          const healed = this.healTransactionItems(tx.billNo, Number(tx.finalAmount || tx.subtotal || 0), allProducts);
+          if (healed.length > 0) {
+            needsRewrite = true;
+            return { ...tx, items: healed };
+          }
+        }
+        return tx;
+      });
+
+      if (needsRewrite) {
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(healedList));
+      }
+      return healedList;
     } catch {
       return [];
+    }
+  },
+
+  async backfillCloudLineItems(client: any, txId: string, items: BillItem[], allProducts: Product[]): Promise<void> {
+    try {
+      const lineItems = items.map(item => {
+        const prod = allProducts.find(p =>
+          p.id === item.productId ||
+          p.code === item.productId ||
+          (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+          (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+        );
+        const derivedBrand = item.brand || prod?.category || (item.productName ? item.productName.trim().split(' ')[0] : '');
+        const derivedCode = prod?.code || (item.productId && !item.productId.startsWith('custom-') && !item.productId.startsWith('item-') ? item.productId : prod?.id) || 'UMA';
+        const derivedType = item.type || prod?.type || deriveFootwearType(item, prod);
+
+        return {
+          transaction_id: txId,
+          product_id: toValidUuidOrNull(prod?.id),
+          product_name: item.productName || 'Footwear',
+          product_code: derivedCode,
+          brand: derivedBrand,
+          color: item.color || '',
+          size: item.size || '',
+          quantity: item.quantity || 1,
+          price: item.price || 0,
+          discounted_price: item.discountedPrice ?? item.price ?? 0,
+          total_price: item.totalPrice ?? item.price ?? 0,
+          wholesale_price: item.wholesalePrice || prod?.wholesalePrice || 0
+        };
+      });
+
+      const { error } = await client.from('transaction_items').insert(lineItems);
+      if (error) {
+        // Fallback retry with minimal schema fields if table columns differ
+        const fallbackItems = lineItems.map(({ brand, color, size, ...rest }) => rest);
+        await client.from('transaction_items').insert(fallbackItems);
+      }
+    } catch (err) {
+      console.warn('Backfill cloud line items error:', err);
     }
   },
 
@@ -866,6 +961,9 @@ export const StorageService = {
     if (!client) return this.getTransactions();
 
     try {
+      const allProducts = this.getProducts();
+      const local = this.getTransactions();
+
       const { data, error } = await client
         .from('sales_transactions')
         .select(`
@@ -879,6 +977,7 @@ export const StorageService = {
           total_discount,
           final_amount,
           split_details,
+          custom_fields,
           staff_username,
           transaction_items (
             id,
@@ -913,6 +1012,69 @@ export const StorageService = {
           };
         }
 
+        // Check existing local transaction for this bill to preserve item data
+        const localTx = local.find(l => l.billNo === tx.bill_no || l.id === tx.id);
+
+        let items: BillItem[] = (tx.transaction_items || []).map((item: any) => {
+          const prod = allProducts.find(p =>
+            p.code === item.product_code ||
+            p.id === item.product_id ||
+            (item.product_name && p.name.trim().toLowerCase() === item.product_name.trim().toLowerCase())
+          );
+          const derivedBrand = item.brand || prod?.category || (item.product_name ? item.product_name.trim().split(' ')[0] : '');
+          const derivedType = item.type || prod?.type || deriveFootwearType(item, prod);
+
+          return {
+            id: item.id || 'item-' + Math.random().toString(36).substr(2, 6),
+            productId: item.product_code || item.product_id || prod?.code || 'prod-1',
+            productName: item.product_name || prod?.name || 'Footwear',
+            brand: derivedBrand,
+            type: derivedType,
+            color: item.color || prod?.colors?.[0]?.name || '',
+            size: item.size || (prod?.sizes && prod.sizes.length > 0 ? prod.sizes[0] : ''),
+            price: Number(item.price || prod?.price || 0),
+            wholesalePrice: Number(item.wholesale_price || prod?.wholesalePrice || 0),
+            discountPercent: item.price > 0 ? Number((((item.price - item.discounted_price) / item.price) * 100).toFixed(2)) : 0,
+            discountedPrice: Number(item.discounted_price ?? item.price ?? 0),
+            quantity: Number(item.quantity || 1),
+            totalPrice: Number(item.total_price ?? item.discounted_price ?? item.price ?? 0)
+          };
+        });
+
+        // Layer 1: Check embedded backup in custom_fields or split_details
+        if (items.length === 0) {
+          const backup = customFields?.__items || rawSplit?.__items;
+          if (Array.isArray(backup) && backup.length > 0) {
+            items = backup.map((bi: any) => ({
+              ...bi,
+              type: bi.type || deriveFootwearType(bi)
+            }));
+          }
+        }
+
+        // Layer 2: Check local transaction if it has rich items (never let empty cloud items overwrite rich local items!)
+        if (items.length === 0 || items.every(i => !i.productName || i.productName.toLowerCase() === 'unknown')) {
+          if (localTx && Array.isArray(localTx.items) && localTx.items.length > 0) {
+            const validLocal = localTx.items.filter(i => i.productName && i.productName.toLowerCase() !== 'unknown');
+            if (validLocal.length > 0) {
+              items = validLocal;
+            }
+          }
+        }
+
+        // Layer 3: Auto-heal corrupted bills from product catalog by price
+        if (items.length === 0 || items.every(i => !i.productName || i.productName.toLowerCase() === 'unknown')) {
+          const healed = this.healTransactionItems(tx.bill_no, Number(tx.final_amount || tx.subtotal || 0), allProducts);
+          if (healed.length > 0) {
+            items = healed;
+          }
+        }
+
+        // If cloud table had 0 transaction_items but we now have recovered items, upload to Supabase!
+        if ((!tx.transaction_items || tx.transaction_items.length === 0) && items.length > 0) {
+          this.backfillCloudLineItems(client, tx.id, items, allProducts);
+        }
+
         return {
           id: tx.id,
           billNo: tx.bill_no,
@@ -926,25 +1088,11 @@ export const StorageService = {
           splitDetails,
           staffUsername: tx.staff_username,
           customFields,
-          items: (tx.transaction_items || []).map((item: any) => ({
-            id: item.id,
-            productId: item.product_code || item.product_id || 'prod-1', // prefer stored product code
-            productName: item.product_name,
-            brand: item.brand || '',
-            color: item.color || '',
-            size: item.size || '',
-            price: Number(item.price),
-            wholesalePrice: Number(item.wholesale_price || 0),
-            discountPercent: item.price > 0 ? Number((((item.price - item.discounted_price) / item.price) * 100).toFixed(2)) : 0,
-            discountedPrice: Number(item.discounted_price),
-            quantity: Number(item.quantity),
-            totalPrice: Number(item.total_price)
-          }))
+          items
         };
       });
 
-      // Merge cloud transactions with any local transactions that haven't reached cloud yet
-      const local = this.getTransactions();
+      // Merge cloud transactions with any unsynced local transactions
       const cloudBillNos = new Set(transactions.map(t => t.billNo));
       const unsyncedLocal = local.filter(t => !cloudBillNos.has(t.billNo));
       const mergedTransactions = [...transactions, ...unsyncedLocal];
@@ -988,7 +1136,8 @@ export const StorageService = {
           try {
             const splitPayload = {
               ...(transaction.splitDetails || {}),
-              ...(transaction.customFields && Object.keys(transaction.customFields).length > 0 ? { __custom_fields: transaction.customFields } : {})
+              ...(transaction.customFields && Object.keys(transaction.customFields).length > 0 ? { __custom_fields: transaction.customFields } : {}),
+              __items: transaction.items // Bulletproof JSON backup in sales_transactions table
             };
 
             const basePayload: any = {
@@ -1000,7 +1149,7 @@ export const StorageService = {
               subtotal: transaction.subtotal,
               total_discount: transaction.totalDiscount,
               final_amount: transaction.finalAmount,
-              split_details: Object.keys(splitPayload).length > 0 ? splitPayload : null,
+              split_details: splitPayload,
               staff_username: transaction.staffUsername
             };
 
@@ -1012,13 +1161,16 @@ export const StorageService = {
               .from('sales_transactions')
               .insert({
                 ...basePayload,
-                custom_fields: transaction.customFields || {}
+                custom_fields: {
+                  ...(transaction.customFields || {}),
+                  __items: transaction.items
+                }
               })
               .select('id')
               .single();
 
             if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
-              // custom_fields column not present in schema, fallback to basePayload (stored safely in split_details.__custom_fields)
+              // custom_fields column not present in schema, fallback to basePayload (stored safely in split_details.__items)
               const fallbackRes = await client
                 .from('sales_transactions')
                 .insert(basePayload)
@@ -1052,7 +1204,7 @@ export const StorageService = {
 
               return {
                 transaction_id: txData.id,
-                product_id: prod?.id || null,
+                product_id: toValidUuidOrNull(prod?.id), // Safe UUID handling: if not valid UUID, pass null
                 product_name: item.productName,
                 product_code: derivedCode,
                 brand: derivedBrand,
@@ -1067,7 +1219,13 @@ export const StorageService = {
             });
 
             const { error: itemsError } = await client.from('transaction_items').insert(lineItems);
-            if (itemsError) console.error('Cloud line items sync error:', itemsError);
+            if (itemsError) {
+              console.error('Cloud line items sync error:', itemsError);
+              // Fallback retry with core columns if extra columns fail
+              const fallbackItems = lineItems.map(({ brand, color, size, ...rest }) => rest);
+              const { error: retryErr } = await client.from('transaction_items').insert(fallbackItems);
+              if (retryErr) console.error('Cloud line items retry insert error:', retryErr);
+            }
 
             // Decrement stock in Supabase for each sold item
             for (const item of transaction.items) {
@@ -1098,6 +1256,7 @@ export const StorageService = {
 
     return updated;
   },
+
 
   async saveTransactionAsync(transaction: SaleTransaction): Promise<SaleTransaction[]> {
     return this.saveTransaction(transaction);
@@ -1758,25 +1917,28 @@ export const StorageService = {
           .eq('bill_no', tx.billNo)
           .maybeSingle();
 
+        const splitPayload = {
+          ...(tx.splitDetails || {}),
+          ...(tx.customFields && Object.keys(tx.customFields).length > 0 ? { __custom_fields: tx.customFields } : {}),
+          __items: tx.items
+        };
+
+        const basePayload: any = {
+          bill_no: tx.billNo,
+          timestamp: tx.timestamp,
+          customer_name: tx.customerName || null,
+          customer_phone: tx.customerPhone || null,
+          payment_mode: tx.paymentMode,
+          subtotal: tx.subtotal,
+          total_discount: tx.totalDiscount,
+          final_amount: tx.finalAmount,
+          split_details: splitPayload,
+          staff_username: tx.staffUsername
+        };
+
+        const targetTxId = existing?.id;
+
         if (!existing) {
-          const splitPayload = {
-            ...(tx.splitDetails || {}),
-            ...(tx.customFields && Object.keys(tx.customFields).length > 0 ? { __custom_fields: tx.customFields } : {})
-          };
-
-          const basePayload: any = {
-            bill_no: tx.billNo,
-            timestamp: tx.timestamp,
-            customer_name: tx.customerName || null,
-            customer_phone: tx.customerPhone || null,
-            payment_mode: tx.paymentMode,
-            subtotal: tx.subtotal,
-            total_discount: tx.totalDiscount,
-            final_amount: tx.finalAmount,
-            split_details: Object.keys(splitPayload).length > 0 ? splitPayload : null,
-            staff_username: tx.staffUsername
-          };
-
           let newTx: any = null;
           let txErr: any = null;
 
@@ -1784,7 +1946,10 @@ export const StorageService = {
             .from('sales_transactions')
             .insert({
               ...basePayload,
-              custom_fields: tx.customFields || {}
+              custom_fields: {
+                ...(tx.customFields || {}),
+                __items: tx.items
+              }
             })
             .select('id')
             .single();
@@ -1804,32 +1969,19 @@ export const StorageService = {
 
           if (!txErr && newTx) {
             txCount++;
-            const lineItems = (tx.items || []).map(item => {
-              const prod = localProducts.find((p: Product) =>
-                p.id === item.productId ||
-                p.code === item.productId ||
-                (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
-                (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
-              );
-              const derivedBrand = item.brand || prod?.category || (item.productName ? item.productName.trim().split(' ')[0] : '');
-              const derivedCode = prod?.code || (item.productId && !item.productId.startsWith('custom-') && !item.productId.startsWith('item-') ? item.productId : prod?.id) || 'UMA';
+            await this.backfillCloudLineItems(client, newTx.id, tx.items || [], localProducts);
+          }
+        } else if (targetTxId) {
+          // If transaction already exists, check if its line items are missing in cloud
+          const { data: existingItems } = await client
+            .from('transaction_items')
+            .select('id')
+            .eq('transaction_id', targetTxId)
+            .limit(1);
 
-              return {
-                transaction_id: newTx.id,
-                product_id: prod?.id || null,
-                product_name: item.productName,
-                product_code: derivedCode,
-                brand: derivedBrand,
-                color: item.color || '',
-                size: item.size || '',
-                quantity: item.quantity,
-                price: item.price,
-                discounted_price: item.discountedPrice,
-                total_price: item.totalPrice,
-                wholesale_price: item.wholesalePrice || prod?.wholesalePrice || 0
-              };
-            });
-            await client.from('transaction_items').insert(lineItems);
+          if ((!existingItems || existingItems.length === 0) && tx.items && tx.items.length > 0) {
+            await this.backfillCloudLineItems(client, targetTxId, tx.items, localProducts);
+            txCount++;
           }
         }
       }

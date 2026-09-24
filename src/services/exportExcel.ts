@@ -192,16 +192,23 @@ export const ExportExcelService = {
 
     return items.map((item) => {
       // Find matching product in catalog
-      const matchedProduct = products.find(p =>
+      let matchedProduct = products.find(p =>
         p.id === item.productId ||
         p.code === item.productId ||
         (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
-        (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+        (item.productName && item.productName.toLowerCase() !== 'unknown' && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
       );
+
+      // If product is still unknown or placeholder, auto-resolve against product catalog by price
+      if (!matchedProduct && (!item.productName || item.productName.toLowerCase() === 'unknown' || !item.productId)) {
+        const targetPrice = item.price > 0 ? item.price : (tx.subtotal || tx.finalAmount);
+        matchedProduct = products.find(p => Math.abs(p.price - targetPrice) < 0.01) ||
+                         products.find(p => Math.abs(p.price - targetPrice) < 0.5);
+      }
 
       const pCode = matchedProduct?.code || (item.productId && !item.productId.startsWith('item-') && !item.productId.startsWith('custom-') ? item.productId : '—');
       const pBrand = item.brand || matchedProduct?.category || '';
-      const pName = matchedProduct?.name || item.productName || '';
+      const pName = (item.productName && item.productName.toLowerCase() !== 'unknown') ? item.productName : (matchedProduct?.name || item.productName || '');
       const pMRP = matchedProduct?.price ?? (item.price || 0);
       const pWS = matchedProduct?.wholesalePrice ?? (item.wholesalePrice || 0);
 
