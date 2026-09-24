@@ -87,6 +87,7 @@
     margin: 0 !important;
     padding: 0 !important;
     height: auto !important;
+    min-height: 0 !important;
     overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -106,6 +107,35 @@
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Unconstrain modal overlay and content during print */
+  .print-modal-overlay {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  .print-modal-content {
+    position: static !important;
+    border: none !important;
+    box-shadow: none !important;
+    max-height: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border-radius: 0 !important;
   }
 
   /* Print bill container */
@@ -114,10 +144,12 @@
     width: 100% !important;
     max-width: 80mm !important;
     margin: 0 auto !important;
-    padding: 8px !important;
+    padding: 4mm !important;
     background-color: #ffffff !important;
     color: #000000 !important;
     border: none !important;
     box-shadow: none !important;
+    overflow: visible !important;
   }
 }
+
