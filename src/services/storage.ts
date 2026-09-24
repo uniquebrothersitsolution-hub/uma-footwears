@@ -599,22 +599,16 @@ export const StorageService = {
     }
     try {
       const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        // If local storage still holds old products, automatically flush and replace with INITIAL_PRODUCTS
-        if (parsed.some(p => p.code?.startsWith('UMA-') || p.code === 'N 1' || p.code === '1721G')) {
-          const initialSorted = this.sortProductsByOrder(INITIAL_PRODUCTS);
-          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(initialSorted));
-          return initialSorted;
-        }
+      if (Array.isArray(parsed)) {
         const mapped = parsed.map((p: Product) => ({
           ...p,
           sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10']
         }));
         return this.sortProductsByOrder(mapped);
       }
-      return this.sortProductsByOrder(INITIAL_PRODUCTS);
+      return [];
     } catch {
-      return this.sortProductsByOrder(INITIAL_PRODUCTS);
+      return [];
     }
   },
 
@@ -676,7 +670,7 @@ export const StorageService = {
 
   addProduct(product: Product): Product[] {
     const products = this.getProducts();
-    const updated = [product, ...products];
+    const updated = [product, ...products.filter(p => p.id !== product.id && p.code !== product.code)];
     this.saveProducts(updated);
 
     // Asynchronous Cloud Sync
@@ -685,7 +679,7 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const { error } = await client.from('products').upsert({
+            const { data, error } = await client.from('products').upsert({
               code: product.code,
               name: product.name,
               category: product.category,
@@ -695,9 +689,16 @@ export const StorageService = {
               stock: product.stock,
               colors: product.colors || [],
               sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']
-            }, { onConflict: 'code' });
-            if (error) console.error('Cloud product add error:', error);
-            else this.emitDataChange();
+            }, { onConflict: 'code' }).select();
+
+            if (error) {
+              console.error('Cloud product add error:', error);
+            } else if (data && data[0] && data[0].id) {
+              product.id = data[0].id;
+              const currentProds = this.getProducts();
+              const withId = currentProds.map(p => p.code === product.code ? { ...p, id: data[0].id } : p);
+              this.saveProducts(withId);
+            }
           } catch (err) {
             console.error('Cloud sync error:', err);
           }
@@ -710,14 +711,14 @@ export const StorageService = {
 
   async addProductAsync(product: Product): Promise<Product[]> {
     const products = this.getProducts();
-    const updated = [product, ...products];
+    const updated = [product, ...products.filter(p => p.id !== product.id && p.code !== product.code)];
     this.saveProducts(updated);
 
     if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
         try {
-          const { error } = await client.from('products').upsert({
+          const { data, error } = await client.from('products').upsert({
             code: product.code,
             name: product.name,
             category: product.category,
@@ -727,8 +728,16 @@ export const StorageService = {
             stock: product.stock,
             colors: product.colors || [],
             sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']
-          }, { onConflict: 'code' });
-          if (error) console.error('Cloud product add error:', error);
+          }, { onConflict: 'code' }).select();
+
+          if (error) {
+            console.error('Cloud product add error:', error);
+          } else if (data && data[0] && data[0].id) {
+            product.id = data[0].id;
+            const currentProds = this.getProducts();
+            const withId = currentProds.map(p => p.code === product.code ? { ...p, id: data[0].id } : p);
+            this.saveProducts(withId);
+          }
         } catch (err) {
           console.error('Cloud sync error:', err);
         }
@@ -736,7 +745,7 @@ export const StorageService = {
     }
 
     this.emitDataChange();
-    return updated;
+    return this.getProducts();
   },
 
   updateProduct(product: Product): Product[] {
@@ -806,17 +815,35 @@ export const StorageService = {
 
   deleteProduct(id: string): Product[] {
     const products = this.getProducts();
-    const target = products.find(p => p.id === id || p.code === id);
-    const updated = products.filter(p => p.id !== id && p.code !== id);
+    const target = products.find(p => p.id === id || p.code === id) || { id, code: id };
+    const updated = products.filter(p => p.id !== id && p.code !== id && (target.id ? p.id !== target.id : true) && (target.code ? p.code !== target.code : true));
     this.saveProducts(updated);
 
     // Asynchronous Cloud Sync
-    if (isSupabaseConfigured() && target) {
+    if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
         (async () => {
           try {
-            const { error } = await client.from('products').delete().eq('code', target.code);
+            // Nullify transaction_items references to avoid FK constraint blocks
+            if (toValidUuidOrNull(target.id)) {
+              await client.from('transaction_items').update({ product_id: null }).eq('product_id', target.id);
+            }
+            if (target.code) {
+              await client.from('transaction_items').update({ product_id: null }).eq('product_code', target.code);
+            }
+
+            let delQuery = client.from('products').delete();
+            if (toValidUuidOrNull(target.id) && target.code) {
+              delQuery = delQuery.or(`id.eq.${target.id},code.eq.${target.code}`);
+            } else if (toValidUuidOrNull(target.id)) {
+              delQuery = delQuery.eq('id', target.id);
+            } else if (target.code) {
+              delQuery = delQuery.eq('code', target.code);
+            } else {
+              delQuery = delQuery.eq('id', id);
+            }
+            const { error } = await delQuery;
             if (error) console.error('Cloud product delete error:', error);
             else this.emitDataChange();
           } catch (err) {
@@ -831,15 +858,32 @@ export const StorageService = {
 
   async deleteProductAsync(id: string): Promise<Product[]> {
     const products = this.getProducts();
-    const target = products.find(p => p.id === id || p.code === id);
-    const updated = products.filter(p => p.id !== id && p.code !== id);
+    const target = products.find(p => p.id === id || p.code === id) || { id, code: id };
+    const updated = products.filter(p => p.id !== id && p.code !== id && (target.id ? p.id !== target.id : true) && (target.code ? p.code !== target.code : true));
     this.saveProducts(updated);
 
-    if (isSupabaseConfigured() && target) {
+    if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
         try {
-          const { error } = await client.from('products').delete().eq('code', target.code);
+          if (toValidUuidOrNull(target.id)) {
+            await client.from('transaction_items').update({ product_id: null }).eq('product_id', target.id);
+          }
+          if (target.code) {
+            await client.from('transaction_items').update({ product_id: null }).eq('product_code', target.code);
+          }
+
+          let delQuery = client.from('products').delete();
+          if (toValidUuidOrNull(target.id) && target.code) {
+            delQuery = delQuery.or(`id.eq.${target.id},code.eq.${target.code}`);
+          } else if (toValidUuidOrNull(target.id)) {
+            delQuery = delQuery.eq('id', target.id);
+          } else if (target.code) {
+            delQuery = delQuery.eq('code', target.code);
+          } else {
+            delQuery = delQuery.eq('id', id);
+          }
+          const { error } = await delQuery;
           if (error) console.error('Cloud product delete error:', error);
         } catch (err) {
           console.error('Cloud sync error:', err);

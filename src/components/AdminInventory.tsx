@@ -117,7 +117,7 @@ export const AdminInventory: React.FC = () => {
     setColors(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleSaveProduct = (e: React.FormEvent) => {
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     const numPrice = typeof price === 'number' ? price : parseFloat(price);
     if (!name.trim() || isNaN(numPrice) || numPrice <= 0) return;
@@ -134,9 +134,9 @@ export const AdminInventory: React.FC = () => {
 
     const productData: Product = {
       id: editingProductId || 'prod-' + Date.now(),
-      code: code || 'UMA-GEN',
+      code: code ? code.trim() : `UMA-FT-${Math.floor(10 + Math.random() * 90)}`,
       name: name.trim(),
-      category: category || 'Footwear',
+      category: category ? category.trim() : 'Footwear',
       type: productType || 'Sandals',
       sizes: sizes.length > 0 ? sizes : ['6', '7', '8', '9', '10', '11'],
       colors: colors.length > 0 ? colors : [{ name: 'Standard' }],
@@ -146,21 +146,40 @@ export const AdminInventory: React.FC = () => {
       stock: !isNaN(numStock) ? numStock : 0
     };
 
-    let updated: Product[];
-    if (editingProductId) {
-      updated = StorageService.updateProduct(productData);
-    } else {
-      updated = StorageService.addProduct(productData);
-    }
-
-    setProducts(updated);
+    // Close modal immediately and clear filters so product is visible right away without sync
     setIsModalOpen(false);
+    setSearchQuery('');
+    setCategoryFilter('All');
+
+    if (editingProductId) {
+      setProducts(prev => prev.map(p => (p.id === editingProductId || p.code === productData.code) ? productData : p));
+      const updated = await StorageService.updateProductAsync(productData);
+      setProducts(updated);
+      showToast(`Product "${productData.name}" updated successfully`);
+    } else {
+      // Optimistic update: instantly place at the top of the list so it shows without sync
+      setProducts(prev => [productData, ...prev.filter(p => p.id !== productData.id && p.code !== productData.code)]);
+      const updated = await StorageService.addProductAsync(productData);
+      setProducts(updated);
+      showToast(`Product "${productData.name}" added successfully`);
+    }
   };
 
-  const handleDeleteProduct = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this footwear product?')) {
-      const updated = StorageService.deleteProduct(id);
-      setProducts(updated);
+  const handleDeleteProduct = async (product: Product) => {
+    const prodName = product.name ? `"${product.name}" (${product.code})` : 'this footwear product';
+    if (window.confirm(`Are you sure you want to delete ${prodName}?`)) {
+      try {
+        // Immediate optimistic UI update
+        setProducts(prev => prev.filter(p => p.id !== product.id && p.code !== product.code));
+        const targetId = product.id || product.code || '';
+        const updated = await StorageService.deleteProductAsync(targetId);
+        setProducts(updated);
+        showToast(`Product ${prodName} deleted successfully`);
+      } catch (err: any) {
+        console.error('Delete error:', err);
+        alert('Failed to delete product: ' + (err?.message || err));
+        setProducts(StorageService.getProducts());
+      }
     }
   };
 
@@ -646,7 +665,7 @@ export const AdminInventory: React.FC = () => {
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDeleteProduct(product.id)}
+                            onClick={() => handleDeleteProduct(product)}
                             className="p-1.5 text-[#64748B] hover:text-[#EF4444] hover:bg-red-50 rounded-lg transition"
                             title="Delete Product"
                           >

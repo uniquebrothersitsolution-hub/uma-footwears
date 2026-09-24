@@ -68,6 +68,8 @@ alter table public.transaction_items add column if not exists size text not null
 alter table public.transaction_items add column if not exists brand text not null default '';
 alter table public.transaction_items add column if not exists type text not null default '';
 alter table public.transaction_items alter column product_id drop not null;
+alter table public.transaction_items drop constraint if exists transaction_items_product_id_fkey;
+alter table public.transaction_items add constraint transaction_items_product_id_fkey foreign key (product_id) references public.products(id) on delete set null;
 
 -- 5. SHOP SETTINGS TABLE
 create table if not exists public.shop_settings (
