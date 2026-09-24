@@ -10,7 +10,7 @@ import { StorageService } from '../services/storage';
 import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { ExcelExportModal } from './ExcelExportModal';
-import { ExportExcelService, deriveFootwearType } from '../services/exportExcel';
+import { ExportExcelService, deriveFootwearType, BUILTIN_LEDGER_COLUMNS } from '../services/exportExcel';
 
 interface SalesHistoryProps {
   onPrintBill: (transaction: SaleTransaction) => void;
@@ -67,6 +67,28 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
+    setAllColumns(StorageService.getAllLedgerColumns());
+  }, [userRole]);
+
+  // Guarantee essential columns like 'payment' and 'type' are in effectiveVisibleColumns
+  const effectiveVisibleColumns = React.useMemo(() => {
+    const cols = [...visibleColumns];
+    const labels = StorageService.getColumnLabels();
+    if (!cols.includes('payment') && labels['__deleted_payment'] !== 'true' && StorageService.isColumnStaffVisible('payment')) {
+      const sizeIdx = cols.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) cols.splice(sizeIdx + 1, 0, 'payment');
+      else cols.push('payment');
+    }
+    if (!cols.includes('type') && labels['__deleted_type'] !== 'true' && StorageService.isColumnStaffVisible('type')) {
+      const brandIdx = cols.indexOf('brand');
+      if (brandIdx !== -1) cols.splice(brandIdx + 1, 0, 'type');
+      else cols.push('type');
+    }
+    return cols;
+  }, [visibleColumns]);
 
   const handleToggleColumn = (colId: string) => {
     let updated: string[];
@@ -147,7 +169,9 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     const matchesSearch = t.billNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (t.customerName && t.customerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
                           (t.staffUsername && t.staffUsername.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesPayment = paymentFilter === 'All' || t.paymentMode === paymentFilter;
+    const rawMode = (t.paymentMode || (t.splitDetails ? 'Split' : 'Cash')).toString().trim().toLowerCase();
+    const normalizedMode = rawMode === 'upi' ? 'UPI' : rawMode === 'split' ? 'Split' : rawMode === 'card' ? 'Card' : 'Cash';
+    const matchesPayment = paymentFilter === 'All' || normalizedMode === paymentFilter || t.paymentMode === paymentFilter;
     return matchesSearch && matchesPayment;
   });
 
@@ -226,7 +250,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                 <SlidersHorizontal className="w-3.5 h-3.5" />
                 <span>Columns</span>
                 <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${isColumnsMenuOpen ? 'bg-white/20 text-white' : 'bg-[#6D5DFB]/15 text-[#6D5DFB]'}`}>
-                  {visibleColumns.length}
+                  {effectiveVisibleColumns.length}
                 </span>
               </button>
 
@@ -326,7 +350,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                   {/* Columns List */}
                   <div className="max-h-80 overflow-y-auto space-y-1 divide-y divide-gray-100 pr-1">
                     {allColumns.filter(c => !c.adminOnly || userRole === 'admin').map((col) => {
-                      const isChecked = visibleColumns.includes(col.id);
+                      const isChecked = effectiveVisibleColumns.includes(col.id);
                       const isEditing = editingColId === col.id;
                       const isStaffVisible = StorageService.isColumnStaffVisible(col.id);
 
@@ -577,8 +601,8 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
           <table className="w-full text-left text-xs text-[#1E1B4B]">
             <thead className="bg-[#F7F8FC] border-b border-[#E7E5EF] text-[#64748B] font-bold uppercase tracking-wider">
               <tr>
-                {visibleColumns.map((colId) => {
-                  const colConfig = allColumns.find(c => c.id === colId);
+                {effectiveVisibleColumns.map((colId) => {
+                  const colConfig = allColumns.find(c => c.id === colId) || BUILTIN_LEDGER_COLUMNS.find(c => c.id === colId);
                   if (!colConfig) return null;
                   return (
                     <th key={colId} className="py-3.5 px-4 whitespace-nowrap">
@@ -599,7 +623,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
             <tbody className="divide-y divide-[#E7E5EF]">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 1} className="py-12 text-center text-[#64748B]">
+                  <td colSpan={effectiveVisibleColumns.length + 1} className="py-12 text-center text-[#64748B]">
                     No sales transactions recorded yet.
                   </td>
                 </tr>
@@ -668,8 +692,8 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                           !isFirstItem ? 'border-t border-dashed border-[#E7E5EF]/60' : ''
                         }`}
                       >
-                        {visibleColumns.map((colId) => {
-                          const colConfig = allColumns.find(c => c.id === colId);
+                        {effectiveVisibleColumns.map((colId) => {
+                          const colConfig = allColumns.find(c => c.id === colId) || BUILTIN_LEDGER_COLUMNS.find(c => c.id === colId);
 
                           // Custom column cell rendering
                           if (colConfig?.isCustom) {
@@ -875,36 +899,45 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                                 </td>
                               );
 
-                            case 'payment':
+                            case 'payment': {
+                              const rawMode = (tx.paymentMode || '').toString().trim().toLowerCase();
+                              const mode: 'Cash' | 'UPI' | 'Split' | 'Card' =
+                                rawMode === 'upi' ? 'UPI'
+                                : rawMode === 'split' ? 'Split'
+                                : rawMode === 'card' ? 'Card'
+                                : (tx.splitDetails && (Number(tx.splitDetails.cash) > 0 || Number(tx.splitDetails.upi) > 0)) ? 'Split'
+                                : 'Cash';
+
                               return isFirstItem ? (
                                 <td key={colId} className="py-3 px-4 whitespace-nowrap">
                                   <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${
-                                    tx.paymentMode === 'Cash'
+                                    mode === 'Cash'
                                       ? 'bg-emerald-50 border-emerald-200 text-[#22C55E]'
-                                      : tx.paymentMode === 'UPI'
+                                      : mode === 'UPI'
                                       ? 'bg-[#EEEBFF] border-[#E7E5EF] text-[#6D5DFB]'
-                                      : tx.paymentMode === 'Split'
+                                      : mode === 'Split'
                                       ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
                                       : 'bg-blue-50 border-blue-200 text-blue-700'
                                   }`}>
-                                    {tx.paymentMode === 'Cash' && <Banknote className="w-3.5 h-3.5 mr-1 text-emerald-600" />}
-                                    {tx.paymentMode === 'UPI' && <Smartphone className="w-3.5 h-3.5 mr-1 text-[#6D5DFB]" />}
-                                    {tx.paymentMode === 'Split' && <Layers className="w-3.5 h-3.5 mr-1 text-[#F59E0B]" />}
-                                    {tx.paymentMode}
+                                    {mode === 'Cash' && <Banknote className="w-3.5 h-3.5 mr-1 text-emerald-600" />}
+                                    {mode === 'UPI' && <Smartphone className="w-3.5 h-3.5 mr-1 text-[#6D5DFB]" />}
+                                    {mode === 'Split' && <Layers className="w-3.5 h-3.5 mr-1 text-[#F59E0B]" />}
+                                    {mode}
                                   </span>
-                                  {tx.paymentMode === 'Split' && tx.splitDetails && (
+                                  {mode === 'Split' && tx.splitDetails && (
                                     <div className="text-[10px] text-[#64748B] font-mono mt-0.5 font-semibold">
-                                      ₹{Number(tx.splitDetails.cash).toFixed(2)} Cash + ₹{Number(tx.splitDetails.upi).toFixed(2)} UPI
+                                      ₹{Number(tx.splitDetails.cash || 0).toFixed(2)} Cash + ₹{Number(tx.splitDetails.upi || 0).toFixed(2)} UPI
                                     </div>
                                   )}
                                 </td>
                               ) : (
                                 <td key={colId} className="py-2 px-4 whitespace-nowrap">
                                   <span className="text-[10px] text-[#94A3B8] font-mono font-medium">
-                                    ↳ {tx.paymentMode}
+                                    ↳ {mode}
                                   </span>
                                 </td>
                               );
+                            }
 
                             case 'billedBy':
                               return isFirstItem ? (

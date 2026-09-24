@@ -1,4 +1,4 @@
-import { Product, SaleTransaction, BillItem, UserAccount, ShopSettings, LedgerColumnConfig, ColumnDataType } from '../types';
+import { Product, SaleTransaction, BillItem, UserAccount, ShopSettings, LedgerColumnConfig, ColumnDataType, PaymentMode } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient';
 import { BUILTIN_LEDGER_COLUMNS, deriveFootwearType } from './exportExcel';
 
@@ -893,13 +893,38 @@ export const StorageService = {
       let needsRewrite = false;
       const allProducts = this.getProducts();
       const healedList = list.map(tx => {
-        const hasBadItems = !tx.items || tx.items.length === 0 || tx.items.every(i => !i.productName || i.productName.toLowerCase() === 'unknown');
+        let changed = false;
+        let items = tx.items;
+        const hasBadItems = !items || items.length === 0 || items.every(i => !i.productName || i.productName.toLowerCase() === 'unknown');
         if (hasBadItems) {
           const healed = this.healTransactionItems(tx.billNo, Number(tx.finalAmount || tx.subtotal || 0), allProducts);
           if (healed.length > 0) {
-            needsRewrite = true;
-            return { ...tx, items: healed };
+            items = healed;
+            changed = true;
           }
+        }
+
+        // Auto-heal paymentMode if missing or non-standard
+        let paymentMode = tx.paymentMode;
+        if (!paymentMode) {
+          if (tx.splitDetails && (Number(tx.splitDetails.cash) > 0 || Number(tx.splitDetails.upi) > 0)) {
+            paymentMode = 'Split';
+          } else {
+            paymentMode = 'Cash';
+          }
+          changed = true;
+        } else {
+          const pm = paymentMode.toString().trim().toLowerCase();
+          const normalized = pm === 'upi' ? 'UPI' : pm === 'split' ? 'Split' : pm === 'card' ? 'Card' : 'Cash';
+          if (paymentMode !== normalized) {
+            paymentMode = normalized;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          needsRewrite = true;
+          return { ...tx, items, paymentMode };
         }
         return tx;
       });
@@ -1075,13 +1100,27 @@ export const StorageService = {
           this.backfillCloudLineItems(client, tx.id, items, allProducts);
         }
 
+        // Normalize paymentMode to avoid null/undefined/case-mismatch
+        let paymentMode: PaymentMode = 'Cash';
+        if (tx.payment_mode) {
+          const pm = tx.payment_mode.toString().trim().toLowerCase();
+          if (pm === 'upi') paymentMode = 'UPI';
+          else if (pm === 'split') paymentMode = 'Split';
+          else if (pm === 'card') paymentMode = 'Card';
+          else paymentMode = 'Cash';
+        } else if (splitDetails && (Number(splitDetails.cash) > 0 || Number(splitDetails.upi) > 0)) {
+          paymentMode = 'Split';
+        } else {
+          paymentMode = 'Cash';
+        }
+
         return {
           id: tx.id,
           billNo: tx.bill_no,
           timestamp: tx.timestamp,
           customerName: tx.customer_name || '',
           customerPhone: tx.customer_phone || '',
-          paymentMode: tx.payment_mode,
+          paymentMode,
           subtotal: Number(tx.subtotal),
           totalDiscount: Number(tx.total_discount),
           finalAmount: Number(tx.final_amount),
@@ -1425,6 +1464,8 @@ export const StorageService = {
       cols = [...defaultIds];
     }
 
+    let changed = false;
+
     // Auto-migrate: ensure 'type' is included if not explicitly deleted
     const labels = this.getColumnLabels();
     if (!cols.includes('type') && labels['__deleted_type'] !== 'true') {
@@ -1434,6 +1475,7 @@ export const StorageService = {
       } else {
         cols.push('type');
       }
+      changed = true;
     }
 
     // Auto-migrate: ensure 'payment' (PAYMENT MODE) is included if not explicitly deleted
@@ -1443,6 +1485,18 @@ export const StorageService = {
         cols.splice(sizeIdx + 1, 0, 'payment');
       } else {
         cols.push('payment');
+      }
+      changed = true;
+    }
+
+    if (changed) {
+      localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(cols));
+      const current = this.getShopSettings();
+      if (!current.ledgerColumns || current.ledgerColumns.length !== cols.length) {
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify({
+          ...current,
+          ledgerColumns: cols
+        }));
       }
     }
 
@@ -1558,7 +1612,7 @@ export const StorageService = {
   },
 
   resetColumns(): void {
-    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
     localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(defaultIds));
     // Clear all labels AND deleted markers
     localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify({}));
@@ -1802,8 +1856,8 @@ export const StorageService = {
       }
 
       if (settingsData) {
-        const cloudCols = Array.isArray(settingsData.ledger_columns) && settingsData.ledger_columns.length > 0
-          ? settingsData.ledger_columns
+        let cloudCols = Array.isArray(settingsData.ledger_columns) && settingsData.ledger_columns.length > 0
+          ? [...settingsData.ledger_columns]
           : undefined;
 
         const cloudCustomCols = Array.isArray(settingsData.custom_columns)
@@ -1815,6 +1869,18 @@ export const StorageService = {
           : undefined;
 
         if (cloudCols) {
+          // Guarantee 'type' and 'payment' in cloud columns if not explicitly deleted
+          const labels = cloudLabels || this.getColumnLabels();
+          if (!cloudCols.includes('type') && labels['__deleted_type'] !== 'true') {
+            const brandIdx = cloudCols.indexOf('brand');
+            if (brandIdx !== -1) cloudCols.splice(brandIdx + 1, 0, 'type');
+            else cloudCols.push('type');
+          }
+          if (!cloudCols.includes('payment') && labels['__deleted_payment'] !== 'true') {
+            const sizeIdx = cloudCols.indexOf('sizeAvailable');
+            if (sizeIdx !== -1) cloudCols.splice(sizeIdx + 1, 0, 'payment');
+            else cloudCols.push('payment');
+          }
           localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(cloudCols));
         }
         if (cloudCustomCols) {
