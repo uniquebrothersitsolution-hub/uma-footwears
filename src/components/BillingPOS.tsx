@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers } from 'lucide-react';
+import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers, AlertTriangle } from 'lucide-react';
 import { Product, BillItem, SaleTransaction, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
 import { useAuth } from '../context/AuthContext';
@@ -36,6 +36,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [splitCashAmount, setSplitCashAmount] = useState<number | ''>('');
   const [splitUpiAmount, setSplitUpiAmount] = useState<number | ''>('');
   const [saleSuccessMessage, setSaleSuccessMessage] = useState<string>('');
+  const [cartErrorMessage, setCartErrorMessage] = useState<string>('');
 
   // Load products on mount & subscribe to realtime stock updates across devices
   useEffect(() => {
@@ -54,6 +55,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   // When Product Selection Changes
   const handleProductSelect = (prodId: string) => {
     setSelectedProductId(prodId);
+    setCartErrorMessage('');
     const prod = products.find(p => p.id === prodId);
     if (prod) {
       setProductNameInput(prod.name);
@@ -68,6 +70,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       const disc = prod.discountPercent || 0;
       const netPrice = prod.price - (prod.price * disc) / 100;
       setDiscountedPrice(Math.round(netPrice * 100) / 100);
+
+      if (prod.stock <= 0) {
+        setCartErrorMessage(`Notice: "${prod.name}" is OUT OF STOCK (0 available in inventory). It cannot be billed.`);
+      }
     }
   };
 
@@ -118,6 +124,8 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   // Add Item to Cart
   const handleAddToCart = (e: React.FormEvent) => {
     e.preventDefault();
+    setCartErrorMessage('');
+
     const numBasePrice = typeof basePrice === 'number' ? basePrice : parseFloat(basePrice);
     if (isNaN(numBasePrice) || numBasePrice <= 0) return;
 
@@ -134,6 +142,27 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       p.name.trim().toLowerCase() === productNameInput.trim().toLowerCase() ||
       (p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
     );
+
+    // STRICT STOCK CHECK: Cannot bill if out of stock
+    if (prod) {
+      if (prod.stock <= 0) {
+        setCartErrorMessage(`Cannot bill "${prod.name}" — This product is currently OUT OF STOCK (0 pairs available in inventory).`);
+        return;
+      }
+
+      const alreadyInCartQty = cartItems
+        .filter(i => i.productId === prod.code || (prod.name && i.productName.toLowerCase() === prod.name.toLowerCase()))
+        .reduce((sum, i) => sum + i.quantity, 0);
+
+      if ((alreadyInCartQty + quantity) > prod.stock) {
+        const remaining = Math.max(0, prod.stock - alreadyInCartQty);
+        setCartErrorMessage(
+          `Cannot bill ${quantity} pair(s) of "${prod.name}". Total available stock is ${prod.stock}${alreadyInCartQty > 0 ? ` (${alreadyInCartQty} already in cart, only ${remaining} more can be added)` : ''}.`
+        );
+        return;
+      }
+    }
+
     const numWholesale = typeof wholesalePrice === 'number' ? wholesalePrice : (wholesalePrice === '' ? 0 : parseFloat(wholesalePrice));
     const itemWholesale = !isNaN(numWholesale) && numWholesale > 0
       ? numWholesale
@@ -185,6 +214,30 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   // Submit Transaction & Optionally Print
   const handleCompleteTransaction = (andPrint: boolean = false) => {
     if (cartItems.length === 0) return;
+    setCartErrorMessage('');
+
+    // Strict stock verification across all cart items before saving
+    const freshProducts = StorageService.getProducts();
+    for (const item of cartItems) {
+      const prod = freshProducts.find(p =>
+        p.id === item.productId ||
+        p.code === item.productId ||
+        (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+        (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+      );
+      if (prod) {
+        if (prod.stock <= 0) {
+          setCartErrorMessage(`Cannot complete bill: "${item.productName}" is OUT OF STOCK (0 available in inventory). Please remove it from the cart.`);
+          return;
+        }
+        if (item.quantity > prod.stock) {
+          setCartErrorMessage(
+            `Cannot complete bill: Quantity for "${item.productName}" (${item.quantity}) exceeds available inventory (${prod.stock}). Please adjust quantity in cart.`
+          );
+          return;
+        }
+      }
+    }
 
     const billNo = 'UMA-' + Math.floor(100000 + Math.random() * 900000);
     const cash = typeof splitCashAmount === 'number' ? splitCashAmount : (parseFloat(String(splitCashAmount)) || 0);
@@ -227,10 +280,45 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     setSplitUpiAmount('');
   };
 
+  // Active product matching & stock status
+  const activeProduct = products.find(p =>
+    (selectedProductId && p.id === selectedProductId) ||
+    (selectedProductId && p.code === selectedProductId) ||
+    (productNameInput.trim() && p.name.trim().toLowerCase() === productNameInput.trim().toLowerCase()) ||
+    (productNameInput.trim() && p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
+  );
+  const isOutOfStock = Boolean(activeProduct && activeProduct.stock <= 0);
+
+  // Check if any item currently in cart has insufficient inventory
+  const hasCartStockIssue = cartItems.some(item => {
+    const prod = products.find(p =>
+      p.id === item.productId ||
+      p.code === item.productId ||
+      (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+      (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+    );
+    return Boolean(prod && (prod.stock <= 0 || item.quantity > prod.stock));
+  });
+
   return (
     <div className="space-y-6">
       
       {/* Top Banner / Notification */}
+      {cartErrorMessage && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-red-700 animate-fade-in shadow-sm">
+          <div className="flex items-center space-x-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-600" />
+            <span className="font-semibold text-sm">{cartErrorMessage}</span>
+          </div>
+          <button
+            onClick={() => setCartErrorMessage('')}
+            className="text-xs font-bold text-red-700 hover:text-red-900 bg-red-100 hover:bg-red-200 px-2.5 py-1 rounded-lg transition"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {saleSuccessMessage && (
         <div className="p-4 bg-[#22C55E]/10 border border-[#22C55E]/30 rounded-xl flex items-center justify-between text-[#22C55E] animate-fade-in shadow-sm">
           <div className="flex items-center space-x-3">
@@ -277,8 +365,13 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   >
                     <option value="">-- Pick from Catalog --</option>
                     {products.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.category}) - ₹{p.price} [Stock: {p.stock}]
+                      <option
+                        key={p.id}
+                        value={p.id}
+                        disabled={p.stock <= 0}
+                        className={p.stock <= 0 ? 'text-red-500 bg-red-50' : ''}
+                      >
+                        {p.name} ({p.category}) - ₹{p.price} {p.stock <= 0 ? '⚠️ [OUT OF STOCK]' : `[Stock: ${p.stock}]`}
                       </option>
                     ))}
                   </select>
@@ -295,6 +388,40 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
                   />
                 </div>
+
+                {/* Real-time Stock Status Banner */}
+                {activeProduct && (
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition-all ${
+                    isOutOfStock
+                      ? 'bg-red-50 border-red-200 text-red-700'
+                      : activeProduct.stock <= 3
+                      ? 'bg-amber-50 border-amber-200 text-amber-800'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  }`}>
+                    <div className="flex items-center space-x-1.5 font-semibold">
+                      {isOutOfStock ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                          <span>OUT OF STOCK: 0 available in inventory — Cannot bill!</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className={`w-2 h-2 rounded-full ${activeProduct.stock <= 3 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+                          <span>In Stock: <strong className="font-mono">{activeProduct.stock}</strong> pair(s) available</span>
+                        </>
+                      )}
+                    </div>
+                    {isOutOfStock ? (
+                      <span className="text-[10px] bg-red-200 text-red-900 font-extrabold px-2 py-0.5 rounded-full uppercase">
+                        Stock Empty
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-[#64748B] font-mono">
+                        Code: {activeProduct.code}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Size Options */}
@@ -451,20 +578,35 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   <input
                     type="number"
                     min="1"
-                    max="999"
+                    max={activeProduct && activeProduct.stock > 0 ? activeProduct.stock : 999}
                     value={quantity}
                     onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm font-mono text-center font-bold focus:outline-none"
+                    disabled={isOutOfStock}
+                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm font-mono text-center font-bold focus:outline-none disabled:opacity-50"
                   />
                 </div>
 
                 <div className="flex-1 pt-5">
                   <button
                     type="submit"
-                    className="w-full py-3 px-4 bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white font-semibold rounded-xl shadow-sm flex items-center justify-center space-x-2 transition-all active:scale-[0.98]"
+                    disabled={isOutOfStock}
+                    className={`w-full py-3 px-4 font-semibold rounded-xl shadow-sm flex items-center justify-center space-x-2 transition-all ${
+                      isOutOfStock
+                        ? 'bg-red-100 border border-red-300 text-red-500 cursor-not-allowed opacity-80'
+                        : 'bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white active:scale-[0.98]'
+                    }`}
                   >
-                    <Plus className="w-5 h-5" />
-                    <span>Add Item to Bill</span>
+                    {isOutOfStock ? (
+                      <>
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
+                        <span>Out of Stock — Cannot Bill</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-5 h-5" />
+                        <span>Add Item to Bill</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -540,37 +682,58 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                     <p className="text-[11px] text-[#64748B] mt-1">Select or type product details on the left</p>
                   </div>
                 ) : (
-                  cartItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl p-3 flex items-center justify-between group hover:border-[#6D5DFB]/40 transition"
-                    >
-                      <div className="space-y-0.5 max-w-[65%]">
-                        <div className="text-xs font-bold text-[#1E1B4B] truncate">{item.productName}</div>
-                        <div className="flex items-center space-x-2 text-[11px] text-[#64748B]">
-                          <span className="px-1.5 py-0.5 bg-white border border-[#E7E5EF] rounded text-[#1E1B4B] font-semibold">
-                            Size: {item.size || item.color}
-                          </span>
-                          <span>Qty: {item.quantity}</span>
-                        </div>
-                        <div className="text-[11px] font-mono text-[#64748B]">
-                          ₹{item.price.toFixed(2)} {item.discountPercent > 0 && <span className="text-[#F59E0B] font-semibold">(-{item.discountPercent}%)</span>} → ₹{item.discountedPrice.toFixed(2)}/pc
-                        </div>
-                      </div>
+                  cartItems.map((item) => {
+                    const cartItemProd = products.find(p =>
+                      p.id === item.productId ||
+                      p.code === item.productId ||
+                      (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+                      (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+                    );
+                    const isItemOutOfStock = Boolean(cartItemProd && (cartItemProd.stock <= 0 || item.quantity > cartItemProd.stock));
 
-                      <div className="flex items-center space-x-3">
-                        <div className="text-right font-mono">
-                          <div className="text-sm font-extrabold text-[#6D5DFB]">₹{item.totalPrice.toFixed(2)}</div>
+                    return (
+                      <div
+                        key={item.id}
+                        className={`bg-[#F7F8FC] border rounded-xl p-3 flex items-center justify-between group transition ${
+                          isItemOutOfStock
+                            ? 'border-red-300 bg-red-50/40 hover:border-red-400'
+                            : 'border-[#E7E5EF] hover:border-[#6D5DFB]/40'
+                        }`}
+                      >
+                        <div className="space-y-0.5 max-w-[65%]">
+                          <div className="text-xs font-bold text-[#1E1B4B] truncate">{item.productName}</div>
+                          <div className="flex items-center space-x-2 text-[11px] text-[#64748B]">
+                            <span className="px-1.5 py-0.5 bg-white border border-[#E7E5EF] rounded text-[#1E1B4B] font-semibold">
+                              Size: {item.size || item.color}
+                            </span>
+                            <span>Qty: {item.quantity}</span>
+                          </div>
+                          <div className="text-[11px] font-mono text-[#64748B]">
+                            ₹{item.price.toFixed(2)} {item.discountPercent > 0 && <span className="text-[#F59E0B] font-semibold">(-{item.discountPercent}%)</span>} → ₹{item.discountedPrice.toFixed(2)}/pc
+                          </div>
+                          {isItemOutOfStock && (
+                            <div className="text-[10px] text-red-600 font-bold flex items-center space-x-1 pt-0.5">
+                              <AlertTriangle className="w-3 h-3 text-red-500 shrink-0" />
+                              <span>Insufficient stock (Available: {cartItemProd?.stock || 0})</span>
+                            </div>
+                          )}
                         </div>
-                        <button
-                          onClick={() => handleRemoveFromCart(item.id)}
-                          className="text-[#64748B] hover:text-[#EF4444] p-1.5 rounded-lg hover:bg-[#EF4444]/10 transition"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+
+                        <div className="flex items-center space-x-3">
+                          <div className="text-right font-mono">
+                            <div className="text-sm font-extrabold text-[#6D5DFB]">₹{item.totalPrice.toFixed(2)}</div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveFromCart(item.id)}
+                            className="text-[#64748B] hover:text-[#EF4444] p-1.5 rounded-lg hover:bg-[#EF4444]/10 transition"
+                            title="Remove from Cart"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -694,20 +857,28 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                 )}
               </div>
 
+              {/* Stock Warning Banner if Cart has issues */}
+              {hasCartStockIssue && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                  <span className="font-semibold">Some items in your cart exceed available stock. Remove or adjust them before billing.</span>
+                </div>
+              )}
+
               {/* Action Buttons: Submit & Print */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleCompleteTransaction(false)}
-                  disabled={cartItems.length === 0}
-                  className="w-full py-3 px-3 bg-[#F7F8FC] hover:bg-[#EEEBFF] disabled:opacity-50 text-[#1E1B4B] font-semibold text-xs rounded-xl border border-[#E7E5EF] transition"
+                  disabled={cartItems.length === 0 || hasCartStockIssue}
+                  className="w-full py-3 px-3 bg-[#F7F8FC] hover:bg-[#EEEBFF] disabled:opacity-50 disabled:cursor-not-allowed text-[#1E1B4B] font-semibold text-xs rounded-xl border border-[#E7E5EF] transition"
                 >
                   Save Bill Only
                 </button>
 
                 <button
                   onClick={() => handleCompleteTransaction(true)}
-                  disabled={cartItems.length === 0}
-                  className="w-full py-3 px-3 bg-[#22C55E] hover:bg-[#16A34A] disabled:opacity-50 text-white font-semibold text-xs rounded-xl shadow-sm flex items-center justify-center space-x-1.5 transition active:scale-[0.98]"
+                  disabled={cartItems.length === 0 || hasCartStockIssue}
+                  className="w-full py-3 px-3 bg-[#22C55E] hover:bg-[#16A34A] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl shadow-sm flex items-center justify-center space-x-1.5 transition active:scale-[0.98]"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Submit & Print</span>
