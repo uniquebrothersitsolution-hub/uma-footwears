@@ -9,7 +9,7 @@ import { StorageService } from '../services/storage';
 import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { ExcelExportModal } from './ExcelExportModal';
-import { ExportExcelService } from '../services/exportExcel';
+import { ExportExcelService, deriveFootwearType } from '../services/exportExcel';
 
 interface SalesHistoryProps {
   onPrintBill: (transaction: SaleTransaction) => void;
@@ -633,6 +633,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                     const nameParts   = pName.trim().split(' ');
                     const derivedBrand   = pBrand || (nameParts.length > 1 ? nameParts[0] : pName);
                     const derivedArticle = nameParts.length > 1 ? nameParts.slice(1).join(' ') : pName;
+                    const derivedType    = deriveFootwearType(item, matchedProduct);
 
                     // Use item price/wholesale if valid, else fall back to product catalog
                     const effectiveMRP = item.price > 0 ? item.price : pMRP;
@@ -797,6 +798,15 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                               return (
                                 <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
                                   <span className="text-xs font-bold text-[#1E1B4B] uppercase">{derivedBrand}</span>
+                                </td>
+                              );
+
+                            case 'type':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200/80 rounded-lg text-xs font-bold uppercase tracking-wider">
+                                    {tx.customFields?.['type'] || derivedType}
+                                  </span>
                                 </td>
                               );
 

@@ -26,6 +26,7 @@ export const AdminInventory: React.FC = () => {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Sports');
+  const [productType, setProductType] = useState('Sandals');
   const [price, setPrice] = useState<number | string>(1000);
   const [wholesalePrice, setWholesalePrice] = useState<number | string>(600);
   const [discountPercent, setDiscountPercent] = useState<number | string>(10);
@@ -63,6 +64,7 @@ export const AdminInventory: React.FC = () => {
     setCode(`UMA-FT-${Math.floor(10 + Math.random() * 90)}`);
     setName('');
     setCategory('Sports');
+    setProductType('Sandals');
     setPrice('');
     setWholesalePrice('');
     setDiscountPercent(0);
@@ -78,6 +80,7 @@ export const AdminInventory: React.FC = () => {
     setCode(product.code || '');
     setName(product.name);
     setCategory(product.category || 'Casual');
+    setProductType(product.type || 'Sandals');
     setPrice(product.price);
     setWholesalePrice(product.wholesalePrice || 0);
     setDiscountPercent(product.discountPercent || 0);
@@ -134,6 +137,7 @@ export const AdminInventory: React.FC = () => {
       code: code || 'UMA-GEN',
       name: name.trim(),
       category: category || 'Footwear',
+      type: productType || 'Sandals',
       sizes: sizes.length > 0 ? sizes : ['6', '7', '8', '9', '10', '11'],
       colors: colors.length > 0 ? colors : [{ name: 'Standard' }],
       price: finalPrice,
@@ -680,7 +684,7 @@ export const AdminInventory: React.FC = () => {
 
             <form onSubmit={handleSaveProduct} className="space-y-4">
               
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Product Code</label>
                   <input
@@ -692,14 +696,31 @@ export const AdminInventory: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Category</label>
+                  <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Brand / Category</label>
                   <input
                     type="text"
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
-                    placeholder="Sports / Formal / Sandals"
+                    placeholder="e.g. WALKARO"
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-xl p-2.5 font-medium focus:outline-none focus:border-[#6D5DFB]"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Footwear Type</label>
+                  <select
+                    value={productType}
+                    onChange={(e) => setProductType(e.target.value)}
+                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] text-xs rounded-xl p-2.5 font-medium focus:outline-none focus:border-[#6D5DFB]"
+                  >
+                    <option value="Sandals">Sandals</option>
+                    <option value="Slippers">Slippers</option>
+                    <option value="Shoes">Shoes</option>
+                    <option value="Flip Flops">Flip Flops</option>
+                    <option value="Clogs">Clogs</option>
+                    <option value="Belly">Belly</option>
+                    <option value="Formal Shoes">Formal Shoes</option>
+                    <option value="Casual">Casual</option>
+                  </select>
                 </div>
               </div>
 

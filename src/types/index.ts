@@ -20,6 +20,7 @@ export interface Product {
   id: string;
   name: string;
   category: string;
+  type?: string;            // Footwear Type (Sandals, Slippers, Shoes, Flip Flops, Clogs, etc.)
   sizes?: string[];
   colors?: ProductColor[];
   price: number;            // MRP / Standard Retail Price
@@ -34,6 +35,7 @@ export interface BillItem {
   productId: string;
   productName: string;
   brand?: string;          // Product category/brand (e.g. WALKARO) — stored with item
+  type?: string;           // Product footwear type (e.g. Sandals, Slippers, Shoes) — stored with item
   size?: string;
   color?: string;
   price: number;            // Base price per unit (MRP)

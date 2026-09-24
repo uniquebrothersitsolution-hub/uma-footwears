@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers, AlertTriangle } from 'lucide-react';
 import { Product, BillItem, SaleTransaction, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
+import { deriveFootwearType } from '../services/exportExcel';
 import { useAuth } from '../context/AuthContext';
 
 const DEFAULT_SIZES = ['6', '7', '8', '9', '10', '11'];
@@ -170,6 +171,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
 
     const chosenSize = selectedSize.trim() || 'Standard';
     const chosenBrand = prod?.category || (productNameInput.trim().split(' ')[0] || '');
+    const chosenType = prod?.type || deriveFootwearType(undefined, prod || { name: productNameInput, category: chosenBrand });
     const chosenCode = prod?.code || selectedProductId || 'custom-' + Date.now();
 
     const newItem: BillItem = {
@@ -177,6 +179,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       productId: chosenCode,
       productName: productNameInput.trim(),
       brand: chosenBrand,
+      type: chosenType,
       size: chosenSize,
       color: chosenSize,
       price: numBasePrice,

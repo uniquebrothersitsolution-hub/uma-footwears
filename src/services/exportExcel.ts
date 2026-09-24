@@ -16,6 +16,7 @@ export const BUILTIN_LEDGER_COLUMNS: LedgerColumnConfig[] = [
   { id: 'articleNo', label: 'ARTICLE NO', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'mrp', label: 'MRP', dataType: 'currency', defaultVisible: true, staffVisible: true },
   { id: 'brand', label: 'BRAND', dataType: 'text', defaultVisible: true, staffVisible: true },
+  { id: 'type', label: 'TYPE', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'wholeSalePct', label: 'WHOLE SALE %', dataType: 'number', defaultVisible: true, staffVisible: false, adminOnly: true },
   { id: 'wholeSaleValue', label: 'WHOLE SALE VALUE', dataType: 'currency', defaultVisible: true, staffVisible: false, adminOnly: true },
   { id: 'sizeAvailable', label: 'SIZE AVAILABLE', dataType: 'number', defaultVisible: true, staffVisible: true },
@@ -39,12 +40,87 @@ export const DEFAULT_VISIBLE_COLUMN_IDS = [
   'articleNo',
   'mrp',
   'brand',
+  'type',
   'wholeSalePct',
   'wholeSaleValue',
   'sizeAvailable',
 ];
 
+/**
+ * Derive footwear type (Sandals, Slippers, Shoes, Flip Flops, Clogs, etc.)
+ */
+export function deriveFootwearType(
+  item?: { productName?: string; brand?: string; type?: string; customFields?: any },
+  matchedProduct?: { name?: string; category?: string; code?: string; type?: string; price?: number }
+): string {
+  if (item?.type) return item.type;
+  if (matchedProduct?.type) return matchedProduct.type;
+  if (item?.customFields?.type) return item.customFields.type;
+
+  const name = (matchedProduct?.name || item?.productName || '').toUpperCase();
+  const code = (matchedProduct?.code || '').toUpperCase();
+  const category = (matchedProduct?.category || item?.brand || '').toUpperCase();
+  const combined = `${code} ${name} ${category}`;
+
+  if (combined.includes('FLIP') || combined.includes('SLIDE') || combined.includes('BX') || combined.includes('SLIDER')) {
+    return 'Flip Flops';
+  }
+  if (
+    combined.includes('SLIPPER') ||
+    combined.includes('CHAPPAL') ||
+    combined.includes('HAWAII') ||
+    combined.includes('1721') ||
+    combined.includes('1129') ||
+    combined.includes('1753')
+  ) {
+    return 'Slippers';
+  }
+  if (combined.includes('CLOG') || combined.includes('JC1150')) {
+    return 'Clogs';
+  }
+  if (combined.includes('BELLY')) {
+    return 'Belly';
+  }
+  if (
+    combined.includes('SHOE') ||
+    combined.includes('SNEAKER') ||
+    combined.includes('BOOT') ||
+    combined.includes('X PRO') ||
+    combined.includes('ASICS') ||
+    combined.includes('CAPTAIN') ||
+    combined.includes('WS9132') ||
+    combined.includes('3325') ||
+    combined.includes('SPORT') ||
+    combined.includes('RUNNING')
+  ) {
+    return 'Shoes';
+  }
+  if (
+    combined.includes('SANDAL') ||
+    combined.includes('WG') ||
+    combined.includes('WU') ||
+    combined.includes('WGR') ||
+    combined.includes('WGB') ||
+    combined.includes('GP') ||
+    combined.includes('DG') ||
+    combined.includes('LP') ||
+    combined.includes('SFG') ||
+    combined.includes('BG1410') ||
+    combined.includes('AL621') ||
+    combined.includes('T2055') ||
+    combined.includes('NV35') ||
+    combined.includes('TYPE 1')
+  ) {
+    return 'Sandals';
+  }
+
+  const price = matchedProduct?.price || (item as any)?.price || 0;
+  return price >= 600 ? 'Shoes' : 'Sandals';
+}
+
 export const ExportExcelService = {
+  deriveFootwearType,
+
   /**
    * Filter transactions by day, month, or year
    */
@@ -132,6 +208,7 @@ export const ExportExcelService = {
       const nameParts = pName.trim().split(' ');
       const derivedBrand = pBrand || (nameParts.length > 1 ? nameParts[0] : pName);
       const derivedArticle = nameParts.length > 1 ? nameParts.slice(1).join(' ') : pName;
+      const derivedType = this.deriveFootwearType(item, matchedProduct);
 
       const effectiveMRP = item.price > 0 ? item.price : pMRP;
       const itemWS = Number(item.wholesalePrice) || 0;
@@ -166,6 +243,9 @@ export const ExportExcelService = {
             break;
           case 'brand':
             row['BRAND'] = tx.customFields?.['brand'] || derivedBrand;
+            break;
+          case 'type':
+            row['TYPE'] = tx.customFields?.['type'] || derivedType;
             break;
           case 'wholeSalePct':
             row['WHOLE SALE %'] = Number(wsPct.toFixed(2));
@@ -321,6 +401,14 @@ export const ExportExcelService = {
   getColumnWidths(visibleColumnIds: string[], customColumns: LedgerColumnConfig[] = []): { wch: number }[] {
     const widthMap: Record<string, number> = {
       billNoDate: 26,
+      pNo: 16,
+      articleNo: 20,
+      mrp: 14,
+      brand: 16,
+      type: 16,
+      wholeSalePct: 16,
+      wholeSaleValue: 18,
+      sizeAvailable: 18,
       customer: 24,
       itemsBilled: 42,
       payment: 22,

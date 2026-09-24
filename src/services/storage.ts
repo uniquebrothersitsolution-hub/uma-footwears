@@ -1246,18 +1246,38 @@ export const StorageService = {
   },
 
   getLedgerColumns(): string[] {
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
     const settings = this.getShopSettings();
+    let cols: string[] = [];
+
     if (settings.ledgerColumns && Array.isArray(settings.ledgerColumns) && settings.ledgerColumns.length > 0) {
-      return settings.ledgerColumns;
+      cols = [...settings.ledgerColumns];
+    } else {
+      const local = localStorage.getItem(STORAGE_KEYS.LEDGER_COLUMNS);
+      if (local) {
+        try {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed) && parsed.length > 0) cols = [...parsed];
+        } catch {}
+      }
     }
-    const local = localStorage.getItem(STORAGE_KEYS.LEDGER_COLUMNS);
-    if (local) {
-      try {
-        const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {}
+
+    if (cols.length === 0) {
+      cols = [...defaultIds];
     }
-    return ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
+
+    // Auto-migrate: ensure 'type' is included if not explicitly deleted
+    const labels = this.getColumnLabels();
+    if (!cols.includes('type') && labels['__deleted_type'] !== 'true') {
+      const brandIdx = cols.indexOf('brand');
+      if (brandIdx !== -1) {
+        cols.splice(brandIdx + 1, 0, 'type');
+      } else {
+        cols.push('type');
+      }
+    }
+
+    return cols;
   },
 
   saveLedgerColumns(columns: string[]): void {
@@ -1369,7 +1389,7 @@ export const StorageService = {
   },
 
   resetColumns(): void {
-    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
     localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(defaultIds));
     // Clear all labels AND deleted markers
     localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify({}));
