@@ -41,14 +41,19 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     setAllColumns(StorageService.getAllLedgerColumns());
     if (isSupabaseConfigured()) {
       setIsSyncing(true);
-      await StorageService.fetchShopSettingsFromCloud();
-      const cloudTxs = await StorageService.fetchTransactionsFromCloud();
-      const cloudProds = await StorageService.fetchProductsFromCloud();
-      setTransactions(cloudTxs);
-      setProducts(cloudProds);
-      setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
-      setAllColumns(StorageService.getAllLedgerColumns());
-      setIsSyncing(false);
+      try {
+        await StorageService.fetchShopSettingsFromCloud();
+        const cloudTxs = await StorageService.fetchTransactionsFromCloud();
+        const cloudProds = await StorageService.fetchProductsFromCloud();
+        setTransactions(cloudTxs);
+        setProducts(cloudProds);
+        setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
+        setAllColumns(StorageService.getAllLedgerColumns());
+      } catch (err) {
+        console.warn('SalesHistory cloud load notice:', err);
+      } finally {
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -63,8 +68,18 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
       setAllColumns(StorageService.getAllLedgerColumns());
     });
 
+    // Auto-poll every 10s while viewing Sales Ledger so any new bills from other devices show up live
+    const pollInterval = setInterval(() => {
+      if (isSupabaseConfigured()) {
+        StorageService.fetchTransactionsFromCloud().then(txs => {
+          setTransactions(txs);
+        }).catch(() => {});
+      }
+    }, 10000);
+
     return () => {
       unsubscribe();
+      clearInterval(pollInterval);
     };
   }, []);
 

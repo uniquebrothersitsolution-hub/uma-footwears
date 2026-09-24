@@ -33,9 +33,15 @@ export const App: React.FC = () => {
     };
     window.addEventListener('focus', handleFocus);
 
+    // Periodic auto-sync interval (every 15s) guarantees all devices stay in sync even if websockets sleep
+    const syncInterval = setInterval(() => {
+      StorageService.syncWithCloud().catch(() => {});
+    }, 15000);
+
     return () => {
       unsubscribeRealtime();
       window.removeEventListener('focus', handleFocus);
+      clearInterval(syncInterval);
     };
   }, []);
 

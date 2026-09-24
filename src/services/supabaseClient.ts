@@ -109,7 +109,9 @@ export const subscribeToRealtimeChanges = (onUpdate: (table: string) => void): (
       { event: '*', schema: 'public', table: 'shop_settings' },
       () => onUpdate('shop_settings')
     )
-    .subscribe();
+    .subscribe((status, err) => {
+      if (err) console.warn('Supabase realtime subscription notice:', err);
+    });
 
   return () => {
     try {

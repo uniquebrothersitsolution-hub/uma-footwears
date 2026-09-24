@@ -1033,7 +1033,7 @@ export const StorageService = {
       const allProducts = this.getProducts();
       const local = this.getTransactions();
 
-      const { data, error } = await client
+      let { data, error } = await client
         .from('sales_transactions')
         .select(`
           id,
@@ -1046,7 +1046,6 @@ export const StorageService = {
           total_discount,
           final_amount,
           split_details,
-          custom_fields,
           staff_username,
           transaction_items (
             id,
@@ -1064,6 +1063,19 @@ export const StorageService = {
           )
         `)
         .order('timestamp', { ascending: false });
+
+      if (error || !data) {
+        console.warn('Initial cloud joined transactions query notice, trying direct fallback...', error);
+        // Resilient fallback: fetch sales_transactions directly (items can be reconstructed from split_details.__items)
+        const fallbackRes = await client
+          .from('sales_transactions')
+          .select('id, bill_no, timestamp, customer_name, customer_phone, payment_mode, subtotal, total_discount, final_amount, split_details, staff_username')
+          .order('timestamp', { ascending: false });
+        if (!fallbackRes.error && fallbackRes.data) {
+          data = fallbackRes.data as any;
+          error = null;
+        }
+      }
 
       if (error || !data) {
         console.warn('Could not fetch cloud transactions, using local cache:', error);
@@ -1182,6 +1194,14 @@ export const StorageService = {
 
       localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(mergedTransactions));
       this.emitDataChange();
+
+      // Automatically push any unsynced local transactions to cloud so other devices get them immediately
+      if (unsyncedLocal.length > 0) {
+        setTimeout(() => {
+          this.pushLocalDataToCloud().catch(err => console.warn('Background auto-push unsynced local notice:', err));
+        }, 1500);
+      }
+
       return mergedTransactions;
     } catch (e) {
       console.error('Error fetching cloud transactions:', e);
@@ -1237,39 +1257,19 @@ export const StorageService = {
             };
 
             let txData: any = null;
-            let txError: any = null;
 
-            // Attempt insert with custom_fields first
-            const resWithCustom = await client
+            // Direct insert using standard schema columns (custom fields and full items safely backed up in split_details)
+            const insertRes = await client
               .from('sales_transactions')
-              .insert({
-                ...basePayload,
-                custom_fields: {
-                  ...(transaction.customFields || {}),
-                  __items: transaction.items
-                }
-              })
+              .insert(basePayload)
               .select('id')
               .single();
 
-            if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
-              // custom_fields column not present in schema, fallback to basePayload (stored safely in split_details.__items)
-              const fallbackRes = await client
-                .from('sales_transactions')
-                .insert(basePayload)
-                .select('id')
-                .single();
-              txData = fallbackRes.data;
-              txError = fallbackRes.error;
-            } else {
-              txData = resWithCustom.data;
-              txError = resWithCustom.error;
-            }
-
-            if (txError || !txData) {
-              console.error('Cloud transaction sync error:', txError);
+            if (insertRes.error || !insertRes.data) {
+              console.error('Cloud transaction sync error:', insertRes.error);
               return;
             }
+            txData = insertRes.data;
 
             // Get all products to look up codes and brands
             const allProducts = this.getProducts();
@@ -2097,37 +2097,17 @@ export const StorageService = {
         const targetTxId = existing?.id;
 
         if (!existing) {
-          let newTx: any = null;
-          let txErr: any = null;
-
-          const resWithCustom = await client
+          const insertRes = await client
             .from('sales_transactions')
-            .insert({
-              ...basePayload,
-              custom_fields: {
-                ...(tx.customFields || {}),
-                __items: tx.items
-              }
-            })
+            .insert(basePayload)
             .select('id')
             .single();
 
-          if (resWithCustom.error && (resWithCustom.error.code === 'PGRST204' || resWithCustom.error.message?.includes('custom_fields'))) {
-            const fallbackRes = await client
-              .from('sales_transactions')
-              .insert(basePayload)
-              .select('id')
-              .single();
-            newTx = fallbackRes.data;
-            txErr = fallbackRes.error;
-          } else {
-            newTx = resWithCustom.data;
-            txErr = resWithCustom.error;
-          }
-
-          if (!txErr && newTx) {
+          if (!insertRes.error && insertRes.data) {
             txCount++;
-            await this.backfillCloudLineItems(client, newTx.id, tx.items || [], localProducts);
+            await this.backfillCloudLineItems(client, insertRes.data.id, tx.items || [], localProducts);
+          } else {
+            console.warn('pushLocalDataToCloud insert notice for bill:', tx.billNo, insertRes.error);
           }
         } else if (targetTxId) {
           // If transaction already exists, check if its line items are missing in cloud
