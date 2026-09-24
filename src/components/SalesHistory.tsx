@@ -73,19 +73,30 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     setAllColumns(StorageService.getAllLedgerColumns());
   }, [userRole]);
 
-  // Guarantee essential columns like 'payment' and 'type' are in effectiveVisibleColumns
-  const effectiveVisibleColumns = React.useMemo(() => {
-    const cols = [...visibleColumns];
-    const labels = StorageService.getColumnLabels();
-    if (!cols.includes('payment') && labels['__deleted_payment'] !== 'true' && StorageService.isColumnStaffVisible('payment')) {
-      const sizeIdx = cols.indexOf('sizeAvailable');
-      if (sizeIdx !== -1) cols.splice(sizeIdx + 1, 0, 'payment');
-      else cols.push('payment');
+  // Ensure payment column is synced to localStorage and visible immediately on mount
+  useEffect(() => {
+    const stored = StorageService.getLedgerColumns();
+    if (!stored.includes('payment')) {
+      const sizeIdx = stored.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) stored.splice(sizeIdx + 1, 0, 'payment');
+      else stored.push('payment');
+      StorageService.saveLedgerColumns(stored);
+      setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
     }
-    if (!cols.includes('type') && labels['__deleted_type'] !== 'true' && StorageService.isColumnStaffVisible('type')) {
+  }, []);
+
+  // Guarantee essential columns like 'payment' and 'type' are unconditionally in effectiveVisibleColumns
+  const effectiveVisibleColumns = React.useMemo(() => {
+    let cols = [...visibleColumns];
+    if (!cols.includes('type')) {
       const brandIdx = cols.indexOf('brand');
       if (brandIdx !== -1) cols.splice(brandIdx + 1, 0, 'type');
       else cols.push('type');
+    }
+    if (!cols.includes('payment')) {
+      const sizeIdx = cols.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) cols.splice(sizeIdx + 1, 0, 'payment');
+      else cols.push('payment');
     }
     return cols;
   }, [visibleColumns]);
@@ -607,7 +618,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                   return (
                     <th key={colId} className="py-3.5 px-4 whitespace-nowrap">
                       <div className="flex items-center space-x-1.5">
-                        <span>{colConfig.label}</span>
+                        <span>{colId === 'payment' ? 'PAYMENT MODE' : (colId === 'type' ? 'TYPE' : colConfig.label)}</span>
                         {colConfig.isCustom && (
                           <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-bold bg-[#6D5DFB]/10 text-[#6D5DFB] uppercase">
                             {colConfig.dataType}

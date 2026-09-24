@@ -1430,15 +1430,24 @@ export const StorageService = {
   getAllLedgerColumns(): LedgerColumnConfig[] {
     const labels = this.getColumnLabels();
     const custom = this.getCustomColumns();
+    // Ensure __deleted_payment is cleared so PAYMENT MODE is always active
+    if (labels['__deleted_payment']) {
+      delete labels['__deleted_payment'];
+      try {
+        localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(labels));
+      } catch {}
+    }
     const builtIn = BUILTIN_LEDGER_COLUMNS
       .filter((col) => {
+        // Never filter out payment or type
+        if (col.id === 'payment' || col.id === 'type') return true;
         // Filter out built-in columns that admin has deleted
         const deletedKey = `__deleted_${col.id}`;
         return labels[deletedKey] !== 'true';
       })
       .map((col) => ({
         ...col,
-        label: labels[col.id] || col.label
+        label: col.id === 'payment' ? 'PAYMENT MODE' : (labels[col.id] || col.label)
       }));
     return [...builtIn, ...custom];
   },
@@ -1466,9 +1475,8 @@ export const StorageService = {
 
     let changed = false;
 
-    // Auto-migrate: ensure 'type' is included if not explicitly deleted
-    const labels = this.getColumnLabels();
-    if (!cols.includes('type') && labels['__deleted_type'] !== 'true') {
+    // Auto-migrate: ensure 'type' is included
+    if (!cols.includes('type')) {
       const brandIdx = cols.indexOf('brand');
       if (brandIdx !== -1) {
         cols.splice(brandIdx + 1, 0, 'type');
@@ -1478,8 +1486,8 @@ export const StorageService = {
       changed = true;
     }
 
-    // Auto-migrate: ensure 'payment' (PAYMENT MODE) is included if not explicitly deleted
-    if (!cols.includes('payment') && labels['__deleted_payment'] !== 'true') {
+    // Auto-migrate: ensure 'payment' (PAYMENT MODE) is unconditionally included
+    if (!cols.includes('payment')) {
       const sizeIdx = cols.indexOf('sizeAvailable');
       if (sizeIdx !== -1) {
         cols.splice(sizeIdx + 1, 0, 'payment');
@@ -1692,6 +1700,7 @@ export const StorageService = {
    * Returns true (visible) by default if not explicitly set.
    */
   isColumnStaffVisible(colId: string): boolean {
+    if (colId === 'payment' || colId === 'type') return true;
     // Check custom columns first
     const customCols = this.getCustomColumns();
     const customCol = customCols.find((c) => c.id === colId);
@@ -1721,10 +1730,18 @@ export const StorageService = {
    */
   getVisibleColumnsForRole(userRole: 'admin' | 'staff'): string[] {
     const allVisible = this.getLedgerColumns();
-    if (userRole === 'admin') return allVisible;
-
-    // Staff: filter out columns not marked as staff-visible
-    return allVisible.filter((colId) => this.isColumnStaffVisible(colId));
+    let cols = userRole === 'admin' ? allVisible : allVisible.filter((colId) => this.isColumnStaffVisible(colId));
+    if (!cols.includes('payment')) {
+      const sizeIdx = cols.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) cols.splice(sizeIdx + 1, 0, 'payment');
+      else cols.push('payment');
+    }
+    if (!cols.includes('type')) {
+      const brandIdx = cols.indexOf('brand');
+      if (brandIdx !== -1) cols.splice(brandIdx + 1, 0, 'type');
+      else cols.push('type');
+    }
+    return cols;
   },
 
   updateTransactionCustomField(txId: string, colId: string, value: any): SaleTransaction[] {
