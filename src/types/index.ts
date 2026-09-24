@@ -33,9 +33,10 @@ export interface BillItem {
   id: string;
   productId: string;
   productName: string;
+  brand?: string;          // Product category/brand (e.g. WALKARO) — stored with item
   size?: string;
   color?: string;
-  price: number;            // Base price per unit
+  price: number;            // Base price per unit (MRP)
   wholesalePrice?: number;  // Wholesale price (Admin record)
   discountPercent: number;  // Discount percentage applied
   discountedPrice: number;  // Net unit price after discount

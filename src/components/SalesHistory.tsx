@@ -4,7 +4,7 @@ import {
   ShoppingBag, FileSpreadsheet, RefreshCw, SlidersHorizontal, Check,
   RotateCcw, Download, Plus, Edit2, X, Tag, Hash, Type, Eye, EyeOff
 } from 'lucide-react';
-import { SaleTransaction, LedgerColumnConfig, ColumnDataType } from '../types';
+import { SaleTransaction, LedgerColumnConfig, ColumnDataType, Product } from '../types';
 import { StorageService } from '../services/storage';
 import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
@@ -30,17 +30,21 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
   const [newColType, setNewColType] = useState<ColumnDataType>('text');
   const [editingColId, setEditingColId] = useState<string | null>(null);
   const [editingColLabel, setEditingColLabel] = useState('');
+  const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
 
   const loadTransactions = async () => {
     // Show cached immediately
     setTransactions(StorageService.getTransactions());
+    setProducts(StorageService.getProducts());
     setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
     setAllColumns(StorageService.getAllLedgerColumns());
     if (isSupabaseConfigured()) {
       setIsSyncing(true);
       await StorageService.fetchShopSettingsFromCloud();
       const cloudTxs = await StorageService.fetchTransactionsFromCloud();
+      const cloudProds = await StorageService.fetchProductsFromCloud();
       setTransactions(cloudTxs);
+      setProducts(cloudProds);
       setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
       setAllColumns(StorageService.getAllLedgerColumns());
       setIsSyncing(false);
@@ -53,6 +57,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     // Auto-update whenever local or remote transactions / settings change
     const unsubscribe = StorageService.onDataChange(() => {
       setTransactions(StorageService.getTransactions());
+      setProducts(StorageService.getProducts());
       setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
       setAllColumns(StorageService.getAllLedgerColumns());
     });
@@ -167,6 +172,10 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
           <h2 className="text-xl font-bold text-[#1E1B4B] flex items-center space-x-2">
             <History className="w-6 h-6 text-[#6D5DFB]" />
             <span>Sales & Billing Ledger</span>
+            <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold flex items-center space-x-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Auto-Fill Active</span>
+            </span>
           </h2>
           <p className="text-xs text-[#64748B] mt-1">
             Complete transaction logs, customer records, and receipt re-printing
@@ -474,7 +483,8 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                   visibleColumns,
                   shopSettings?.shopName || 'UMA FOOTWEARS',
                   'sales_ledger',
-                  StorageService.getCustomColumns()
+                  StorageService.getCustomColumns(),
+                  products
                 );
               }}
               className="py-2 px-3 bg-[#22C55E] hover:bg-[#16A34A] text-white text-xs font-semibold rounded-xl shadow-sm flex items-center space-x-1.5 transition whitespace-nowrap"
@@ -593,358 +603,364 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                   </td>
                 </tr>
               ) : (
-                filteredTransactions.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-[#F7F8FC]/80 transition">
-                    
-                    {visibleColumns.map((colId) => {
-                      const colConfig = allColumns.find(c => c.id === colId);
+                filteredTransactions.map((tx) => {
+                  const txDate = new Date(tx.timestamp);
+                  const formattedDateTime = !isNaN(txDate.getTime()) ? txDate.toLocaleString('en-IN') : tx.timestamp;
+                  const items = tx.items && tx.items.length > 0 ? tx.items : [{
+                    id: '', productId: '', productName: 'Unknown', size: '', color: '',
+                    price: tx.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+                    discountedPrice: tx.finalAmount || 0, quantity: 1, totalPrice: tx.finalAmount || 0
+                  }];
 
-                      // Custom column cell rendering with respective data types
-                      if (colConfig?.isCustom) {
-                        const rawVal = tx.customFields?.[colId] ?? colConfig.defaultValue ?? '';
-                        switch (colConfig.dataType) {
-                          case 'currency':
-                            return (
-                              <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                                <div className="flex items-center">
-                                  <span className="text-[#64748B] text-xs font-semibold mr-1">₹</span>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    defaultValue={rawVal}
-                                    placeholder="0.00"
-                                    onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                                    }}
-                                    className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                                  />
-                                </div>
-                              </td>
-                            );
-                          case 'number':
-                            return (
-                              <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  defaultValue={rawVal}
-                                  placeholder="0"
-                                  onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                                  }}
-                                  className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                                />
-                              </td>
-                            );
-                          case 'date':
-                            return (
-                              <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                                <input
-                                  type="date"
-                                  defaultValue={rawVal}
-                                  onChange={(e) => handleCellChange(tx.id, colId, e.target.value)}
-                                  className="bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-medium text-[#1E1B4B] focus:outline-none transition"
-                                />
-                              </td>
-                            );
-                          case 'tag':
-                            return (
-                              <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                                <input
-                                  type="text"
-                                  defaultValue={rawVal}
-                                  placeholder="Tag..."
-                                  onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                                  }}
-                                  className="w-24 bg-indigo-50/60 hover:bg-white focus:bg-white border border-indigo-200/60 hover:border-[#6D5DFB] focus:border-[#6D5DFB] rounded-lg px-2 py-1 text-xs font-extrabold text-[#6D5DFB] focus:outline-none transition"
-                                />
-                              </td>
-                            );
-                          case 'text':
-                          default:
-                            return (
-                              <td key={colId} className="py-2.5 px-4">
-                                <input
-                                  type="text"
-                                  defaultValue={rawVal}
-                                  placeholder="Add details..."
-                                  onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                                  }}
-                                  className="min-w-[120px] bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-medium text-[#1E1B4B] focus:outline-none transition"
-                                />
-                              </td>
-                            );
-                        }
-                      }
+                  return items.map((item, itemIdx) => {
+                    const isFirstItem = itemIdx === 0;
 
-                      // Built-in system columns
-                      switch (colId) {
-                        case 'pNo':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                              <input
-                                type="text"
-                                defaultValue={tx.customFields?.['pNo'] ?? ''}
-                                placeholder="P No..."
-                                onBlur={(e) => handleCellChange(tx.id, 'pNo', e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-mono font-bold text-[#1E1B4B] focus:outline-none transition"
-                              />
-                            </td>
-                          );
+                    // Look up full Product object for this item (by id, code, or name)
+                    const matchedProduct: Product | undefined =
+                      products.find(p => p.id === item.productId) ||
+                      products.find(p => p.code === item.productId) ||
+                      (item.productId ? products.find(p => p.code && p.code.toLowerCase() === item.productId.toLowerCase()) : undefined) ||
+                      products.find(p => item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase());
 
-                        case 'articleNo':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                              <input
-                                type="text"
-                                defaultValue={tx.customFields?.['articleNo'] ?? ''}
-                                placeholder="Article..."
-                                onBlur={(e) => handleCellChange(tx.id, 'articleNo', e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                              />
-                            </td>
-                          );
+                    // Use product catalog data as the source of truth; fall back to item data
+                    const pCode   = matchedProduct?.code || (item.productId && !item.productId.startsWith('item-') && !item.productId.startsWith('custom-') ? item.productId : '—');
+                    const pBrand  = item.brand || matchedProduct?.category || '';
+                    const pName   = matchedProduct?.name || item.productName || '';
+                    const pMRP    = matchedProduct?.price ?? (item.price || 0);
+                    const pWS     = matchedProduct?.wholesalePrice ?? (item.wholesalePrice || 0);
 
-                        case 'mrp':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div className="flex items-center">
-                                <span className="text-[#64748B] text-xs font-semibold mr-1">₹</span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  defaultValue={tx.customFields?.['mrp'] ?? ''}
-                                  placeholder="0.00"
-                                  onBlur={(e) => handleCellChange(tx.id, 'mrp', e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                  className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                                />
-                              </div>
-                            </td>
-                          );
+                    // Derive article from product name: e.g. "WALKARO BX1260" → "BX1260"
+                    const nameParts   = pName.trim().split(' ');
+                    const derivedBrand   = pBrand || (nameParts.length > 1 ? nameParts[0] : pName);
+                    const derivedArticle = nameParts.length > 1 ? nameParts.slice(1).join(' ') : pName;
 
-                        case 'brand':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                              <input
-                                type="text"
-                                defaultValue={tx.customFields?.['brand'] ?? ''}
-                                placeholder="Brand..."
-                                onBlur={(e) => handleCellChange(tx.id, 'brand', e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                              />
-                            </td>
-                          );
+                    // Use item price/wholesale if valid, else fall back to product catalog
+                    const effectiveMRP = item.price > 0 ? item.price : pMRP;
+                    const itemWS = Number(item.wholesalePrice) || 0;
+                    const effectiveWS  = itemWS > 0 ? itemWS : pWS;
 
-                        case 'wholeSalePct':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div className="flex items-center">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  defaultValue={tx.customFields?.['wholeSalePct'] ?? ''}
-                                  placeholder="0"
-                                  onBlur={(e) => handleCellChange(tx.id, 'wholeSalePct', e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                  className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-amber-700 focus:outline-none transition"
-                                />
-                                <span className="text-amber-700 text-xs font-semibold ml-0.5">%</span>
-                              </div>
-                            </td>
-                          );
+                    // Wholesale computations
+                    const wsValue: number = Number(effectiveWS) || 0;
+                    const wsPct = (effectiveMRP > 0 && wsValue > 0)
+                      ? Math.round(((wsValue / effectiveMRP) * 100) * 100) / 100
+                      : 0;
 
-                        case 'wholeSaleValue':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div className="flex items-center">
-                                <span className="text-amber-700 text-xs font-semibold mr-1">₹</span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  defaultValue={tx.customFields?.['wholeSaleValue'] ?? ''}
-                                  placeholder="0.00"
-                                  onBlur={(e) => handleCellChange(tx.id, 'wholeSaleValue', e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                  className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-amber-700 focus:outline-none transition"
-                                />
-                              </div>
-                            </td>
-                          );
+                    // Size: from item (if specific size like "10"), or from product sizes list, or color/fallback
+                    const itemSize = (item.size && item.size !== 'Standard')
+                      ? item.size
+                      : (matchedProduct?.sizes && matchedProduct.sizes.length > 0 ? matchedProduct.sizes.join(', ') : item.size || item.color || '—');
 
-                        case 'sizeAvailable':
-                          return (
-                            <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <input
-                                type="number"
-                                step="1"
-                                defaultValue={tx.customFields?.['sizeAvailable'] ?? ''}
-                                placeholder="0"
-                                onBlur={(e) => handleCellChange(tx.id, 'sizeAvailable', e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
-                              />
-                            </td>
-                          );
+                    const rowKey = `${tx.id}-item-${itemIdx}`;
 
-                        case 'billNoDate':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 whitespace-nowrap">
-                              <div className="font-extrabold text-[#1E1B4B] text-sm font-mono">{tx.billNo}</div>
-                              <div className="text-[10px] text-[#64748B] flex items-center space-x-1 font-medium">
-                                <Calendar className="w-3 h-3 text-[#6D5DFB]" />
-                                <span>{new Date(tx.timestamp).toLocaleString('en-IN')}</span>
-                              </div>
-                            </td>
-                          );
+                    return (
+                      <tr
+                        key={rowKey}
+                        className={`hover:bg-[#F7F8FC]/80 transition ${
+                          !isFirstItem ? 'border-t border-dashed border-[#E7E5EF]/60' : ''
+                        }`}
+                      >
+                        {visibleColumns.map((colId) => {
+                          const colConfig = allColumns.find(c => c.id === colId);
 
-                        case 'customer':
-                          return (
-                            <td key={colId} className="py-3.5 px-4">
-                              {tx.customerName ? (
-                                <div>
-                                  <div className="font-bold text-[#1E1B4B]">{tx.customerName}</div>
-                                  {tx.customerPhone && (
-                                    <div className="text-[10px] text-[#64748B] font-mono">{tx.customerPhone}</div>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-[#64748B] italic">Walk-in Customer</span>
-                              )}
-                            </td>
-                          );
-
-                        case 'itemsBilled':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 max-w-xs">
-                              <div className="text-[#1E1B4B] font-medium leading-relaxed">
-                                {tx.items.map(i => `${i.productName} (${i.size || i.color ? `Size: ${i.size || i.color}` : ''}) x${i.quantity}`).join(', ')}
-                              </div>
-                            </td>
-                          );
-
-                        case 'payment':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 whitespace-nowrap">
-                              <span className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${
-                                tx.paymentMode === 'Cash'
-                                  ? 'bg-emerald-50 border-emerald-200 text-[#22C55E]'
-                                  : tx.paymentMode === 'UPI'
-                                  ? 'bg-[#EEEBFF] border-[#E7E5EF] text-[#6D5DFB]'
-                                  : tx.paymentMode === 'Split'
-                                  ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
-                                  : 'bg-blue-50 border-blue-200 text-blue-700'
-                              }`}>
-                                {tx.paymentMode}
-                              </span>
-                              {tx.paymentMode === 'Split' && tx.splitDetails && (
-                                <div className="text-[10px] text-[#64748B] font-mono mt-0.5">
-                                  ₹{Number(tx.splitDetails.cash).toFixed(2)} Cash + ₹{Number(tx.splitDetails.upi).toFixed(2)} UPI
-                                </div>
-                              )}
-                            </td>
-                          );
-
-                        case 'billedBy':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-bold text-[#1E1B4B] whitespace-nowrap">
-                              {tx.staffUsername}
-                            </td>
-                          );
-
-                        case 'amount':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-mono whitespace-nowrap">
-                              <div className="text-sm font-extrabold text-[#6D5DFB]">₹{tx.finalAmount.toFixed(2)}</div>
-                              {tx.totalDiscount > 0 && !visibleColumns.includes('discount') && (
-                                <div className="text-[10px] text-[#F59E0B] font-semibold">Save: ₹{tx.totalDiscount.toFixed(2)}</div>
-                              )}
-                              {userRole === 'admin' && !visibleColumns.includes('profit') && (() => {
-                                const txWholesale = tx.items.reduce((s, i) => s + (i.wholesalePrice || 0) * i.quantity, 0);
-                                const txProfit = tx.finalAmount - txWholesale;
+                          // Custom column cell rendering
+                          if (colConfig?.isCustom) {
+                            const rawVal = tx.customFields?.[colId] ?? colConfig.defaultValue ?? '';
+                            switch (colConfig.dataType) {
+                              case 'currency':
                                 return (
-                                  <div className="text-[10px] text-amber-700 font-bold mt-0.5" title={`Discounted ₹${tx.finalAmount.toFixed(2)} - Wholesale ₹${txWholesale.toFixed(2)}`}>
-                                    Profit: ₹{txProfit.toFixed(2)}
-                                  </div>
+                                  <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                    <div className="flex items-center">
+                                      <span className="text-[#64748B] text-xs font-semibold mr-1">₹</span>
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        defaultValue={rawVal}
+                                        placeholder="0.00"
+                                        onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                        className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                                      />
+                                    </div>
+                                  </td>
                                 );
-                              })()}
-                            </td>
-                          );
+                              case 'number':
+                                return (
+                                  <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      defaultValue={rawVal}
+                                      placeholder="0"
+                                      onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                      className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-bold text-[#1E1B4B] focus:outline-none transition"
+                                    />
+                                  </td>
+                                );
+                              case 'date':
+                                return (
+                                  <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                    <input
+                                      type="date"
+                                      defaultValue={rawVal}
+                                      onChange={(e) => handleCellChange(tx.id, colId, e.target.value)}
+                                      className="bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-medium text-[#1E1B4B] focus:outline-none transition"
+                                    />
+                                  </td>
+                                );
+                              case 'tag':
+                                return (
+                                  <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                    <input
+                                      type="text"
+                                      defaultValue={rawVal}
+                                      placeholder="Tag..."
+                                      onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                      className="w-24 bg-indigo-50/60 hover:bg-white focus:bg-white border border-indigo-200/60 hover:border-[#6D5DFB] focus:border-[#6D5DFB] rounded-lg px-2 py-1 text-xs font-extrabold text-[#6D5DFB] focus:outline-none transition"
+                                    />
+                                  </td>
+                                );
+                              case 'text':
+                              default:
+                                return (
+                                  <td key={colId} className="py-2.5 px-4">
+                                    <input
+                                      type="text"
+                                      defaultValue={rawVal}
+                                      placeholder="Add details..."
+                                      onBlur={(e) => handleCellChange(tx.id, colId, e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                      className="min-w-[120px] bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-[#E7E5EF] focus:border-[#6D5DFB] rounded px-1.5 py-1 text-xs font-medium text-[#1E1B4B] focus:outline-none transition"
+                                    />
+                                  </td>
+                                );
+                            }
+                          }
 
-                        case 'subtotal': {
-                          const subtotal = tx.subtotal || tx.items.reduce((s, i) => s + i.price * i.quantity, 0);
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-mono font-semibold text-[#1E1B4B] whitespace-nowrap">
-                              ₹{subtotal.toFixed(2)}
-                            </td>
-                          );
-                        }
+                          // Built-in system columns — auto-filled from item data
+                          switch (colId) {
+                            case 'billNoDate':
+                              return (
+                                <td key={colId} className="py-3 px-4 whitespace-nowrap">
+                                  {isFirstItem ? (
+                                    <>
+                                      <div className="font-extrabold text-[#1E1B4B] text-sm font-mono">{tx.billNo}</div>
+                                      <div className="text-[10px] text-[#64748B] flex items-center space-x-1 font-medium">
+                                        <Calendar className="w-3 h-3 text-[#6D5DFB]" />
+                                        <span>{formattedDateTime}</span>
+                                      </div>
+                                      {items.length > 1 && (
+                                        <div className="text-[9px] text-[#6D5DFB] font-bold mt-0.5">
+                                          {items.length} items
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <div className="text-[10px] text-[#94A3B8] font-mono pl-2 border-l-2 border-[#E7E5EF]">
+                                      {tx.billNo}
+                                    </div>
+                                  )}
+                                </td>
+                              );
 
-                        case 'discount':
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-mono font-semibold text-[#F59E0B] whitespace-nowrap">
-                              ₹{tx.totalDiscount.toFixed(2)}
-                            </td>
-                          );
+                            case 'pNo':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                  <span className="text-xs font-mono font-bold text-[#6D5DFB]">
+                                    {pCode}
+                                  </span>
+                                </td>
+                              );
 
-                        case 'wholesale': {
-                          const wholesaleCost = tx.items.reduce((s, i) => s + (i.wholesalePrice || 0) * i.quantity, 0);
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-mono font-semibold text-[#64748B] whitespace-nowrap">
-                              ₹{wholesaleCost.toFixed(2)}
-                            </td>
-                          );
-                        }
+                            case 'articleNo':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                  <span className="text-xs font-bold text-[#1E1B4B]">{derivedArticle || pName}</span>
+                                </td>
+                              );
 
-                        case 'profit': {
-                          const wholesaleCost = tx.items.reduce((s, i) => s + (i.wholesalePrice || 0) * i.quantity, 0);
-                          const profit = tx.finalAmount - wholesaleCost;
-                          return (
-                            <td key={colId} className="py-3.5 px-4 font-mono font-bold text-[#16A34A] whitespace-nowrap">
-                              ₹{profit.toFixed(2)}
-                            </td>
-                          );
-                        }
+                            case 'mrp':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-[#64748B] text-xs font-semibold">₹</span>
+                                    <span className="text-xs font-bold text-[#1E1B4B]">{effectiveMRP.toFixed(2)}</span>
+                                  </div>
+                                  {item.quantity > 1 && (
+                                    <div className="text-[10px] text-[#64748B] font-mono">×{item.quantity}</div>
+                                  )}
+                                </td>
+                              );
 
-                        default:
-                          return null;
-                      }
-                    })}
+                            case 'brand':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                  <span className="text-xs font-bold text-[#1E1B4B] uppercase">{derivedBrand}</span>
+                                </td>
+                              );
 
-                    {/* Re-Print & Actions */}
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end space-x-2">
-                        <button
-                          onClick={() => onPrintBill(tx)}
-                          className="px-3 py-1.5 bg-[#EEEBFF] hover:bg-[#6D5DFB] hover:text-white text-[#6D5DFB] border border-[#E7E5EF] rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>Re-Print</span>
-                        </button>
+                            case 'wholeSalePct':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                  <div className="flex items-center space-x-0.5">
+                                    <span className="text-xs font-bold text-amber-700">{wsPct.toFixed(1)}</span>
+                                    <span className="text-amber-700 text-xs font-semibold">%</span>
+                                  </div>
+                                </td>
+                              );
 
-                        {userRole === 'admin' && (
-                          <button
-                            onClick={() => handleDeleteTransaction(tx.id)}
-                            className="p-1.5 text-[#64748B] hover:text-[#EF4444] hover:bg-red-50 rounded-lg transition"
-                            title="Delete Transaction"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                            case 'wholeSaleValue':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-amber-700 text-xs font-semibold">₹</span>
+                                    <span className="text-xs font-bold text-amber-700">{wsValue.toFixed(2)}</span>
+                                  </div>
+                                </td>
+                              );
 
-                  </tr>
-                ))
+                            case 'sizeAvailable':
+                              return (
+                                <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
+                                  <span className="px-2 py-0.5 bg-[#EEEBFF] text-[#6D5DFB] rounded-lg text-xs font-extrabold font-mono">
+                                    {itemSize}
+                                  </span>
+                                </td>
+                              );
+
+                            case 'customer':
+                              return isFirstItem ? (
+                                <td key={colId} className="py-3 px-4">
+                                  {tx.customerName ? (
+                                    <div>
+                                      <div className="font-bold text-[#1E1B4B]">{tx.customerName}</div>
+                                      {tx.customerPhone && (
+                                        <div className="text-[10px] text-[#64748B] font-mono">{tx.customerPhone}</div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-[#64748B] italic">Walk-in Customer</span>
+                                  )}
+                                </td>
+                              ) : <td key={colId} className="py-3 px-4"></td>;
+
+                            case 'itemsBilled':
+                              return (
+                                <td key={colId} className="py-3 px-4 max-w-xs">
+                                  <div className="text-[#1E1B4B] font-medium">
+                                    {item.productName}
+                                    {item.quantity > 1 && (
+                                      <span className="ml-1 text-[#6D5DFB] font-bold">×{item.quantity}</span>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+
+                            case 'payment':
+                              return isFirstItem ? (
+                                <td key={colId} className="py-3 px-4 whitespace-nowrap">
+                                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${
+                                    tx.paymentMode === 'Cash'
+                                      ? 'bg-emerald-50 border-emerald-200 text-[#22C55E]'
+                                      : tx.paymentMode === 'UPI'
+                                      ? 'bg-[#EEEBFF] border-[#E7E5EF] text-[#6D5DFB]'
+                                      : tx.paymentMode === 'Split'
+                                      ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
+                                      : 'bg-blue-50 border-blue-200 text-blue-700'
+                                  }`}>
+                                    {tx.paymentMode}
+                                  </span>
+                                  {tx.paymentMode === 'Split' && tx.splitDetails && (
+                                    <div className="text-[10px] text-[#64748B] font-mono mt-0.5">
+                                      ₹{Number(tx.splitDetails.cash).toFixed(2)} Cash + ₹{Number(tx.splitDetails.upi).toFixed(2)} UPI
+                                    </div>
+                                  )}
+                                </td>
+                              ) : <td key={colId} className="py-3 px-4"></td>;
+
+                            case 'billedBy':
+                              return isFirstItem ? (
+                                <td key={colId} className="py-3 px-4 font-bold text-[#1E1B4B] whitespace-nowrap">
+                                  {tx.staffUsername}
+                                </td>
+                              ) : <td key={colId} className="py-3 px-4"></td>;
+
+                            case 'amount':
+                              return (
+                                <td key={colId} className="py-3 px-4 font-mono whitespace-nowrap">
+                                  <div className="text-sm font-extrabold text-[#6D5DFB]">₹{(item.discountedPrice * item.quantity).toFixed(2)}</div>
+                                  {item.discountPercent > 0 && (
+                                    <div className="text-[10px] text-[#F59E0B] font-semibold">-{item.discountPercent.toFixed(1)}%</div>
+                                  )}
+                                </td>
+                              );
+
+                            case 'subtotal': {
+                              return (
+                                <td key={colId} className="py-3 px-4 font-mono font-semibold text-[#1E1B4B] whitespace-nowrap">
+                                  ₹{(item.price * item.quantity).toFixed(2)}
+                                </td>
+                              );
+                            }
+
+                            case 'discount':
+                              return (
+                                <td key={colId} className="py-3 px-4 font-mono font-semibold text-[#F59E0B] whitespace-nowrap">
+                                  ₹{((item.price - item.discountedPrice) * item.quantity).toFixed(2)}
+                                </td>
+                              );
+
+                            case 'wholesale': {
+                              return (
+                                <td key={colId} className="py-3 px-4 font-mono font-semibold text-[#64748B] whitespace-nowrap">
+                                  ₹{(wsValue * item.quantity).toFixed(2)}
+                                </td>
+                              );
+                            }
+
+                            case 'profit': {
+                              const itemProfit = (item.discountedPrice - wsValue) * item.quantity;
+                              return (
+                                <td key={colId} className="py-3 px-4 font-mono font-bold text-[#16A34A] whitespace-nowrap">
+                                  ₹{itemProfit.toFixed(2)}
+                                </td>
+                              );
+                            }
+
+                            default:
+                              return null;
+                          }
+                        })}
+
+                        {/* Re-Print & Actions — only show on first item row of each transaction */}
+                        {isFirstItem ? (
+                          <td className="py-3 px-4 text-right whitespace-nowrap" rowSpan={items.length}>
+                            <div className="flex items-center justify-end space-x-2">
+                              <button
+                                onClick={() => onPrintBill(tx)}
+                                className="px-3 py-1.5 bg-[#EEEBFF] hover:bg-[#6D5DFB] hover:text-white text-[#6D5DFB] border border-[#E7E5EF] rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Re-Print</span>
+                              </button>
+
+                              {userRole === 'admin' && (
+                                <button
+                                  onClick={() => handleDeleteTransaction(tx.id)}
+                                  className="p-1.5 text-[#64748B] hover:text-[#EF4444] hover:bg-red-50 rounded-lg transition"
+                                  title="Delete Transaction"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  });
+                })
               )}
             </tbody>
           </table>

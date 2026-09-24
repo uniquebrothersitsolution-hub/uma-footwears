@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { SaleTransaction, LedgerColumnConfig } from '../types';
+import { SaleTransaction, LedgerColumnConfig, Product } from '../types';
 
 export type ExportPeriod = 'day' | 'month' | 'year' | 'all';
 
@@ -81,6 +81,155 @@ export const ExportExcelService = {
   },
 
   /**
+   * Helper to compute wholesale % from item data
+   */
+  computeWholeSalePct(item: { price: number; wholesalePrice?: number }): number {
+    const ws = item.wholesalePrice || 0;
+    if (!item.price || item.price <= 0 || ws <= 0) return 0;
+    return Math.round(((ws / item.price) * 100) * 100) / 100;
+  },
+
+  /**
+   * Build all per-item ledger rows for a single transaction.
+   * Each BillItem becomes one row with product data auto-filled.
+   */
+  buildItemRows(
+    tx: SaleTransaction,
+    visibleColumnIds: string[],
+    customColumns: LedgerColumnConfig[] = [],
+    products: Product[] = []
+  ): Record<string, any>[] {
+    const txDate = new Date(tx.timestamp);
+    const formattedDate = !isNaN(txDate.getTime()) ? txDate.toLocaleDateString('en-IN') : tx.timestamp;
+    const formattedTime = !isNaN(txDate.getTime()) ? txDate.toLocaleTimeString('en-IN') : '';
+    const billLabel = `${tx.billNo} (${formattedDate} ${formattedTime})`;
+
+    const paymentDetails = tx.paymentMode === 'Split'
+      ? `Split (Cash: ₹${(tx.splitDetails?.cash || 0).toFixed(2)}, UPI: ₹${(tx.splitDetails?.upi || 0).toFixed(2)})`
+      : tx.paymentMode;
+
+    const items = tx.items && tx.items.length > 0 ? tx.items : [{
+      id: '', productId: '', productName: 'Unknown', size: '', color: '',
+      price: tx.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+      discountedPrice: tx.finalAmount || 0, quantity: 1, totalPrice: tx.finalAmount || 0
+    }];
+
+    return items.map((item) => {
+      // Find matching product in catalog
+      const matchedProduct = products.find(p =>
+        p.id === item.productId ||
+        p.code === item.productId ||
+        (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+        (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+      );
+
+      const pCode = matchedProduct?.code || (item.productId && !item.productId.startsWith('item-') && !item.productId.startsWith('custom-') ? item.productId : '—');
+      const pBrand = item.brand || matchedProduct?.category || '';
+      const pName = matchedProduct?.name || item.productName || '';
+      const pMRP = matchedProduct?.price ?? (item.price || 0);
+      const pWS = matchedProduct?.wholesalePrice ?? (item.wholesalePrice || 0);
+
+      const nameParts = pName.trim().split(' ');
+      const derivedBrand = pBrand || (nameParts.length > 1 ? nameParts[0] : pName);
+      const derivedArticle = nameParts.length > 1 ? nameParts.slice(1).join(' ') : pName;
+
+      const effectiveMRP = item.price > 0 ? item.price : pMRP;
+      const itemWS = Number(item.wholesalePrice) || 0;
+      const effectiveWS = itemWS > 0 ? itemWS : pWS;
+
+      const wsValue = Number(effectiveWS) || 0;
+      const wsPct = (effectiveMRP > 0 && wsValue > 0)
+        ? Math.round(((wsValue / effectiveMRP) * 100) * 100) / 100
+        : 0;
+
+      const itemSize = (item.size && item.size !== 'Standard')
+        ? item.size
+        : (matchedProduct?.sizes && matchedProduct.sizes.length > 0 ? matchedProduct.sizes.join(', ') : item.size || item.color || '');
+
+      const profit = item.discountedPrice * item.quantity - wsValue * item.quantity;
+
+      const row: Record<string, any> = {};
+
+      visibleColumnIds.forEach((colId) => {
+        switch (colId) {
+          case 'billNoDate':
+            row['BILL # & DATE'] = billLabel;
+            break;
+          case 'pNo':
+            row['P NO'] = tx.customFields?.['pNo'] || pCode;
+            break;
+          case 'articleNo':
+            row['ARTICLE NO'] = tx.customFields?.['articleNo'] || derivedArticle;
+            break;
+          case 'mrp':
+            row['MRP'] = Number(effectiveMRP.toFixed(2));
+            break;
+          case 'brand':
+            row['BRAND'] = tx.customFields?.['brand'] || derivedBrand;
+            break;
+          case 'wholeSalePct':
+            row['WHOLE SALE %'] = Number(wsPct.toFixed(2));
+            break;
+          case 'wholeSaleValue':
+            row['WHOLE SALE VALUE'] = Number(wsValue.toFixed(2));
+            break;
+          case 'sizeAvailable':
+            row['SIZE AVAILABLE'] = itemSize;
+            break;
+          case 'customer':
+            row['CUSTOMER'] = `${tx.customerName || 'Walk-in Customer'}${tx.customerPhone ? ` [${tx.customerPhone}]` : ''}`;
+            break;
+          case 'itemsBilled':
+            row['ITEMS BILLED'] = `${item.productName} x${item.quantity}`;
+            break;
+          case 'payment':
+            row['PAYMENT'] = paymentDetails;
+            break;
+          case 'billedBy':
+            row['BILLED BY'] = tx.staffUsername;
+            break;
+          case 'amount':
+            row['AMOUNT (₹)'] = Number((item.discountedPrice * item.quantity).toFixed(2));
+            break;
+          case 'subtotal':
+            row['MRP SUBTOTAL (₹)'] = Number((effectiveMRP * item.quantity).toFixed(2));
+            break;
+          case 'discount':
+            row['DISCOUNT SAVED (₹)'] = Number(((effectiveMRP - item.discountedPrice) * item.quantity).toFixed(2));
+            break;
+          case 'wholesale':
+            row['WHOLESALE COST (₹)'] = Number((wsValue * item.quantity).toFixed(2));
+            break;
+          case 'profit':
+            row['NET PROFIT (₹)'] = Number(profit.toFixed(2));
+            break;
+          default: {
+            const customCol = customColumns.find((c) => c.id === colId);
+            if (customCol) {
+              const rawVal = tx.customFields?.[colId] ?? customCol.defaultValue;
+              const colHeader = customCol.label.toUpperCase();
+              if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+                if (customCol.dataType === 'currency' || customCol.dataType === 'number') {
+                  const num = Number(rawVal);
+                  row[colHeader] = isNaN(num) ? rawVal : num;
+                } else {
+                  row[colHeader] = String(rawVal);
+                }
+              } else {
+                row[colHeader] = '';
+              }
+            }
+            break;
+          }
+        }
+      });
+
+      return row;
+    });
+  },
+
+  /**
+   * @deprecated Use buildItemRows instead. Kept for backward compatibility.
    * Helper to format a single ledger row based on active columns (built-in and custom)
    */
   buildLedgerRow(
@@ -88,85 +237,7 @@ export const ExportExcelService = {
     visibleColumnIds: string[],
     customColumns: LedgerColumnConfig[] = []
   ): Record<string, any> {
-    const txDate = new Date(tx.timestamp);
-    const formattedDate = !isNaN(txDate.getTime()) ? txDate.toLocaleDateString('en-IN') : tx.timestamp;
-    const formattedTime = !isNaN(txDate.getTime()) ? txDate.toLocaleTimeString('en-IN') : '';
-
-    const itemsSummary = tx.items
-      .map((item) => `${item.productName} (${item.size || item.color ? `Size: ${item.size || item.color}` : ''}) x${item.quantity}`)
-      .join('; ');
-
-    const wholesaleCost = tx.items.reduce((sum, item) => sum + (item.wholesalePrice || 0) * item.quantity, 0);
-    const profit = tx.finalAmount - wholesaleCost;
-
-    const cashPortion = tx.paymentMode === 'Cash' 
-      ? tx.finalAmount 
-      : (tx.paymentMode === 'Split' ? (tx.splitDetails?.cash || 0) : 0);
-    const upiPortion = tx.paymentMode === 'UPI' 
-      ? tx.finalAmount 
-      : (tx.paymentMode === 'Split' ? (tx.splitDetails?.upi || 0) : 0);
-
-    const paymentDetails = tx.paymentMode === 'Split'
-      ? `Split (Cash: ₹${cashPortion.toFixed(2)}, UPI: ₹${upiPortion.toFixed(2)})`
-      : tx.paymentMode;
-
-    const row: Record<string, any> = {};
-
-    visibleColumnIds.forEach((colId) => {
-      switch (colId) {
-        case 'billNoDate':
-          row['BILL # & DATE'] = `${tx.billNo} (${formattedDate} ${formattedTime})`;
-          break;
-        case 'customer':
-          row['CUSTOMER'] = `${tx.customerName || 'Walk-in Customer'}${tx.customerPhone ? ` [${tx.customerPhone}]` : ''}`;
-          break;
-        case 'itemsBilled':
-          row['ITEMS BILLED'] = itemsSummary;
-          break;
-        case 'payment':
-          row['PAYMENT'] = paymentDetails;
-          break;
-        case 'billedBy':
-          row['BILLED BY'] = tx.staffUsername;
-          break;
-        case 'amount':
-          row['AMOUNT (₹)'] = Number(tx.finalAmount.toFixed(2));
-          break;
-        case 'subtotal':
-          row['MRP SUBTOTAL (₹)'] = Number(tx.subtotal.toFixed(2));
-          break;
-        case 'discount':
-          row['DISCOUNT SAVED (₹)'] = Number(tx.totalDiscount.toFixed(2));
-          break;
-        case 'wholesale':
-          row['WHOLESALE COST (₹)'] = Number(wholesaleCost.toFixed(2));
-          break;
-        case 'profit':
-          row['NET PROFIT (₹)'] = Number(profit.toFixed(2));
-          break;
-        default: {
-          // Custom column handling with respective data types
-          const customCol = customColumns.find((c) => c.id === colId);
-          if (customCol) {
-            const rawVal = tx.customFields?.[colId] ?? customCol.defaultValue;
-            const colHeader = customCol.label.toUpperCase();
-            if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
-              if (customCol.dataType === 'currency' || customCol.dataType === 'number') {
-                const num = Number(rawVal);
-                row[colHeader] = isNaN(num) ? rawVal : num;
-              } else {
-                row[colHeader] = String(rawVal);
-              }
-            } else {
-              row[colHeader] = '';
-            }
-          }
-          break;
-        }
-      }
-    });
-
-    return row;
+    return this.buildItemRows(tx, visibleColumnIds, customColumns)[0] || {};
   },
 
   /**
@@ -275,12 +346,16 @@ export const ExportExcelService = {
     visibleColumnIds: string[] = DEFAULT_VISIBLE_COLUMN_IDS,
     shopName: string = 'UMA FOOTWEARS',
     filenamePrefix: string = 'sales_ledger',
-    customColumns: LedgerColumnConfig[] = []
+    customColumns: LedgerColumnConfig[] = [],
+    products: Product[] = []
   ): { count: number; filename: string } {
     const activeCols = visibleColumnIds.length > 0 ? visibleColumnIds : DEFAULT_VISIBLE_COLUMN_IDS;
 
-    // Build data rows
-    const dataRows = transactions.map((tx) => this.buildLedgerRow(tx, activeCols, customColumns));
+    // Build per-item data rows (one row per BillItem)
+    const dataRows: Record<string, any>[] = [];
+    transactions.forEach((tx) => {
+      this.buildItemRows(tx, activeCols, customColumns, products).forEach(row => dataRows.push(row));
+    });
 
     // Append totals row
     if (transactions.length > 0) {
@@ -309,12 +384,17 @@ export const ExportExcelService = {
     options: ExportFilterOptions,
     shopName: string = 'UMA FOOTWEARS',
     visibleColumnIds: string[] = DEFAULT_VISIBLE_COLUMN_IDS,
-    customColumns: LedgerColumnConfig[] = []
+    customColumns: LedgerColumnConfig[] = [],
+    products: Product[] = []
   ): { count: number; filename: string } {
     const filtered = this.filterTransactions(transactions, options);
     const activeCols = visibleColumnIds.length > 0 ? visibleColumnIds : DEFAULT_VISIBLE_COLUMN_IDS;
 
-    const dataRows = filtered.map((tx) => this.buildLedgerRow(tx, activeCols, customColumns));
+    // Build per-item data rows (one row per BillItem)
+    const dataRows: Record<string, any>[] = [];
+    filtered.forEach((tx) => {
+      this.buildItemRows(tx, activeCols, customColumns, products).forEach(row => dataRows.push(row));
+    });
 
     if (filtered.length > 0) {
       dataRows.push(this.buildLedgerTotalsRow(filtered, activeCols, customColumns));

@@ -49,6 +49,7 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onCl
       ? visibleColumnIds 
       : StorageService.getLedgerColumns();
     const customCols = StorageService.getCustomColumns();
+    const products = StorageService.getProducts();
 
     const result = ExportExcelService.exportSalesToExcel(
       transactions,
@@ -60,7 +61,8 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({ isOpen, onCl
       },
       shopSettings.shopName || 'UMA FOOTWEARS',
       cols,
-      customCols
+      customCols,
+      products
     );
 
     setExportFeedback(`Successfully exported ${result.count} bills to ${result.filename}!`);

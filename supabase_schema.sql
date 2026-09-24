@@ -51,7 +51,8 @@ create table if not exists public.transaction_items (
   transaction_id uuid references public.sales_transactions(id) on delete cascade not null,
   product_id uuid references public.products(id) on delete set null,
   product_name text not null,
-  product_code text not null,
+  product_code text not null,       -- Stores product catalog code (e.g. N22-BX1260)
+  brand text not null default '',   -- Stores product category/brand (e.g. WALKARO)
   color text not null default '',
   size text not null default '',
   quantity integer not null check (quantity > 0),
@@ -64,6 +65,7 @@ create table if not exists public.transaction_items (
 
 -- Safe migration if transaction_items table already exists
 alter table public.transaction_items add column if not exists size text not null default '';
+alter table public.transaction_items add column if not exists brand text not null default '';
 
 -- 5. SHOP SETTINGS TABLE
 create table if not exists public.shop_settings (
@@ -136,14 +138,14 @@ begin
 
   -- 2. Insert items and decrement stock atomically
   for item in select * from jsonb_to_recordset(p_items) as x(
-    productId uuid, productName text, productCode text, color text, size text,
+    productId uuid, productName text, productCode text, brand text, color text, size text,
     quantity int, price numeric, discountedPrice numeric, totalPrice numeric, wholesalePrice numeric
   ) loop
     insert into public.transaction_items (
-      transaction_id, product_id, product_name, product_code,
+      transaction_id, product_id, product_name, product_code, brand,
       color, size, quantity, price, discounted_price, total_price, wholesale_price
     ) values (
-      v_tx_id, item.productId, item.productName, item.productCode,
+      v_tx_id, item.productId, item.productName, item.productCode, coalesce(item.brand, ''),
       coalesce(item.color, ''), coalesce(item.size, ''), item.quantity, item.price, item.discountedPrice, item.totalPrice, coalesce(item.wholesalePrice, 0)
     );
 

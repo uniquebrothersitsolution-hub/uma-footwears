@@ -128,17 +128,26 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     const numDiscPct = typeof discountPercent === 'number' ? discountPercent : (discountPercent === '' ? 0 : parseFloat(discountPercent));
     const finalDiscPercent = !isNaN(numDiscPct) ? Math.round(numDiscPct * 100) / 100 : 0;
 
-    const prod = products.find(p => p.id === selectedProductId);
+    const prod = products.find(p =>
+      (selectedProductId && p.id === selectedProductId) ||
+      (selectedProductId && p.code === selectedProductId) ||
+      p.name.trim().toLowerCase() === productNameInput.trim().toLowerCase() ||
+      (p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
+    );
     const numWholesale = typeof wholesalePrice === 'number' ? wholesalePrice : (wholesalePrice === '' ? 0 : parseFloat(wholesalePrice));
     const itemWholesale = !isNaN(numWholesale) && numWholesale > 0
       ? numWholesale
       : (prod?.wholesalePrice || Math.round(numBasePrice * 0.6 * 100) / 100);
 
     const chosenSize = selectedSize.trim() || 'Standard';
+    const chosenBrand = prod?.category || (productNameInput.trim().split(' ')[0] || '');
+    const chosenCode = prod?.code || selectedProductId || 'custom-' + Date.now();
+
     const newItem: BillItem = {
       id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
-      productId: selectedProductId || 'custom-' + Date.now(),
+      productId: chosenCode,
       productName: productNameInput.trim(),
+      brand: chosenBrand,
       size: chosenSize,
       color: chosenSize,
       price: numBasePrice,

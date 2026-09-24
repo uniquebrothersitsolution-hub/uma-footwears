@@ -818,6 +818,7 @@ export const StorageService = {
             product_id,
             product_name,
             product_code,
+            brand,
             color,
             size,
             quantity,
@@ -860,8 +861,9 @@ export const StorageService = {
           customFields,
           items: (tx.transaction_items || []).map((item: any) => ({
             id: item.id,
-            productId: item.product_id || item.product_code || 'prod-1',
+            productId: item.product_code || item.product_id || 'prod-1', // prefer stored product code
             productName: item.product_name,
+            brand: item.brand || '',
             color: item.color || '',
             size: item.size || '',
             price: Number(item.price),
@@ -967,18 +969,35 @@ export const StorageService = {
               return;
             }
 
-            const lineItems = transaction.items.map(item => ({
-              transaction_id: txData.id,
-              product_name: item.productName,
-              product_code: item.productId || 'UMA',
-              color: item.color || '',
-              size: item.size || '',
-              quantity: item.quantity,
-              price: item.price,
-              discounted_price: item.discountedPrice,
-              total_price: item.totalPrice,
-              wholesale_price: item.wholesalePrice || 0
-            }));
+            // Get all products to look up codes and brands
+            const allProducts = this.getProducts();
+
+            const lineItems = transaction.items.map(item => {
+              // Find product in catalog to get the real code and category
+              const prod = allProducts.find(p =>
+                p.id === item.productId ||
+                p.code === item.productId ||
+                (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+                (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+              );
+              const derivedBrand = item.brand || prod?.category || (item.productName ? item.productName.trim().split(' ')[0] : '');
+              const derivedCode = prod?.code || (item.productId && !item.productId.startsWith('custom-') && !item.productId.startsWith('item-') ? item.productId : prod?.id) || 'UMA';
+
+              return {
+                transaction_id: txData.id,
+                product_id: prod?.id || null,
+                product_name: item.productName,
+                product_code: derivedCode,
+                brand: derivedBrand,
+                color: item.color || '',
+                size: item.size || '',
+                quantity: item.quantity,
+                price: item.price,
+                discounted_price: item.discountedPrice,
+                total_price: item.totalPrice,
+                wholesale_price: item.wholesalePrice || prod?.wholesalePrice || 0
+              };
+            });
 
             const { error: itemsError } = await client.from('transaction_items').insert(lineItems);
             if (itemsError) console.error('Cloud line items sync error:', itemsError);
@@ -1698,18 +1717,31 @@ export const StorageService = {
 
           if (!txErr && newTx) {
             txCount++;
-            const lineItems = (tx.items || []).map(item => ({
-              transaction_id: newTx.id,
-              product_name: item.productName,
-              product_code: item.productId || 'UMA',
-              color: item.color || '',
-              size: item.size || '',
-              quantity: item.quantity,
-              price: item.price,
-              discounted_price: item.discountedPrice,
-              total_price: item.totalPrice,
-              wholesale_price: item.wholesalePrice || 0
-            }));
+            const lineItems = (tx.items || []).map(item => {
+              const prod = localProducts.find((p: Product) =>
+                p.id === item.productId ||
+                p.code === item.productId ||
+                (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+                (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+              );
+              const derivedBrand = item.brand || prod?.category || (item.productName ? item.productName.trim().split(' ')[0] : '');
+              const derivedCode = prod?.code || (item.productId && !item.productId.startsWith('custom-') && !item.productId.startsWith('item-') ? item.productId : prod?.id) || 'UMA';
+
+              return {
+                transaction_id: newTx.id,
+                product_id: prod?.id || null,
+                product_name: item.productName,
+                product_code: derivedCode,
+                brand: derivedBrand,
+                color: item.color || '',
+                size: item.size || '',
+                quantity: item.quantity,
+                price: item.price,
+                discounted_price: item.discountedPrice,
+                total_price: item.totalPrice,
+                wholesale_price: item.wholesalePrice || prod?.wholesalePrice || 0
+              };
+            });
             await client.from('transaction_items').insert(lineItems);
           }
         }
