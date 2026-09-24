@@ -20,10 +20,10 @@ export const BUILTIN_LEDGER_COLUMNS: LedgerColumnConfig[] = [
   { id: 'wholeSalePct', label: 'WHOLE SALE %', dataType: 'number', defaultVisible: true, staffVisible: false, adminOnly: true },
   { id: 'wholeSaleValue', label: 'WHOLE SALE VALUE', dataType: 'currency', defaultVisible: true, staffVisible: false, adminOnly: true },
   { id: 'sizeAvailable', label: 'SIZE AVAILABLE', dataType: 'number', defaultVisible: true, staffVisible: true },
+  { id: 'payment', label: 'PAYMENT MODE', dataType: 'tag', defaultVisible: true, staffVisible: true },
   // Legacy columns (hidden by default, can be re-enabled via Manage Columns)
   { id: 'customer', label: 'CUSTOMER', dataType: 'text', defaultVisible: false, staffVisible: true },
   { id: 'itemsBilled', label: 'ITEMS BILLED', dataType: 'text', defaultVisible: false, staffVisible: true },
-  { id: 'payment', label: 'PAYMENT', dataType: 'tag', defaultVisible: false, staffVisible: true },
   { id: 'billedBy', label: 'BILLED BY', dataType: 'text', defaultVisible: false, staffVisible: true },
   { id: 'amount', label: 'AMOUNT', dataType: 'currency', defaultVisible: false, staffVisible: true },
   { id: 'subtotal', label: 'MRP SUBTOTAL (₹)', dataType: 'currency', defaultVisible: false, staffVisible: true },
@@ -44,6 +44,7 @@ export const DEFAULT_VISIBLE_COLUMN_IDS = [
   'wholeSalePct',
   'wholeSaleValue',
   'sizeAvailable',
+  'payment',
 ];
 
 /**
@@ -270,7 +271,7 @@ export const ExportExcelService = {
             row['ITEMS BILLED'] = `${item.productName} x${item.quantity}`;
             break;
           case 'payment':
-            row['PAYMENT'] = paymentDetails;
+            row['PAYMENT MODE'] = paymentDetails;
             break;
           case 'billedBy':
             row['BILLED BY'] = tx.staffUsername;

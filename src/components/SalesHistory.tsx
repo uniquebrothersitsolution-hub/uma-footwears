@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   History, Search, Printer, Trash2, Calendar, DollarSign, TrendingUp,
   ShoppingBag, FileSpreadsheet, RefreshCw, SlidersHorizontal, Check,
-  RotateCcw, Download, Plus, Edit2, X, Tag, Hash, Type, Eye, EyeOff
+  RotateCcw, Download, Plus, Edit2, X, Tag, Hash, Type, Eye, EyeOff,
+  Banknote, Smartphone, Layers
 } from 'lucide-react';
 import { SaleTransaction, LedgerColumnConfig, ColumnDataType, Product } from '../types';
 import { StorageService } from '../services/storage';
@@ -877,7 +878,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                             case 'payment':
                               return isFirstItem ? (
                                 <td key={colId} className="py-3 px-4 whitespace-nowrap">
-                                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${
+                                  <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${
                                     tx.paymentMode === 'Cash'
                                       ? 'bg-emerald-50 border-emerald-200 text-[#22C55E]'
                                       : tx.paymentMode === 'UPI'
@@ -886,15 +887,24 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                                       ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
                                       : 'bg-blue-50 border-blue-200 text-blue-700'
                                   }`}>
+                                    {tx.paymentMode === 'Cash' && <Banknote className="w-3.5 h-3.5 mr-1 text-emerald-600" />}
+                                    {tx.paymentMode === 'UPI' && <Smartphone className="w-3.5 h-3.5 mr-1 text-[#6D5DFB]" />}
+                                    {tx.paymentMode === 'Split' && <Layers className="w-3.5 h-3.5 mr-1 text-[#F59E0B]" />}
                                     {tx.paymentMode}
                                   </span>
                                   {tx.paymentMode === 'Split' && tx.splitDetails && (
-                                    <div className="text-[10px] text-[#64748B] font-mono mt-0.5">
+                                    <div className="text-[10px] text-[#64748B] font-mono mt-0.5 font-semibold">
                                       ₹{Number(tx.splitDetails.cash).toFixed(2)} Cash + ₹{Number(tx.splitDetails.upi).toFixed(2)} UPI
                                     </div>
                                   )}
                                 </td>
-                              ) : <td key={colId} className="py-3 px-4"></td>;
+                              ) : (
+                                <td key={colId} className="py-2 px-4 whitespace-nowrap">
+                                  <span className="text-[10px] text-[#94A3B8] font-mono font-medium">
+                                    ↳ {tx.paymentMode}
+                                  </span>
+                                </td>
+                              );
 
                             case 'billedBy':
                               return isFirstItem ? (

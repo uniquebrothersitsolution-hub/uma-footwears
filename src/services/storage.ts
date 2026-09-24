@@ -1405,7 +1405,7 @@ export const StorageService = {
   },
 
   getLedgerColumns(): string[] {
-    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
     const settings = this.getShopSettings();
     let cols: string[] = [];
 
@@ -1433,6 +1433,16 @@ export const StorageService = {
         cols.splice(brandIdx + 1, 0, 'type');
       } else {
         cols.push('type');
+      }
+    }
+
+    // Auto-migrate: ensure 'payment' (PAYMENT MODE) is included if not explicitly deleted
+    if (!cols.includes('payment') && labels['__deleted_payment'] !== 'true') {
+      const sizeIdx = cols.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) {
+        cols.splice(sizeIdx + 1, 0, 'payment');
+      } else {
+        cols.push('payment');
       }
     }
 
