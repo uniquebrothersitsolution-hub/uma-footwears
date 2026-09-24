@@ -1,4 +1,5 @@
 import { SaleTransaction, ShopSettings } from '../types';
+import { PAYMENT_UPI_ID, PAYMENT_UPI_PAYEE, PAYMENT_UPI_PHONE, PAYMENT_QR_CODE_ONLY } from '../assets/paymentQr';
 
 export const PrintService = {
   /**
@@ -178,6 +179,45 @@ export const PrintService = {
       margin-top: 4px;
       letter-spacing: 0.5px;
     }
+    .qr-box {
+      text-align: center;
+      margin: 6px 0;
+      padding: 6px 3px;
+      border: 1px dashed #000;
+      border-radius: 4px;
+      background: #fff;
+    }
+    .qr-title {
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+    .qr-img {
+      width: 36mm;
+      height: 36mm;
+      margin: 0 auto 3px auto;
+      display: block;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
+    }
+    .qr-upi {
+      font-size: 9.5px;
+      font-weight: 700;
+      font-family: monospace;
+      margin-bottom: 1px;
+    }
+    .qr-sub {
+      font-size: 8.5px;
+      color: #222;
+    }
+    .qr-apps {
+      font-size: 8px;
+      font-weight: 600;
+      color: #444;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -267,6 +307,15 @@ export const PrintService = {
           Cash: ₹${Number(transaction.splitDetails?.cash || 0).toFixed(2)} | UPI: ₹${Number(transaction.splitDetails?.upi || 0).toFixed(2)}
         </div>` : ''}
       </div>
+    </div>
+
+    <!-- UPI Scan & Pay QR Code -->
+    <div class="qr-box">
+      <div class="qr-title">SCAN &amp; PAY VIA UPI</div>
+      <img class="qr-img" src="${PAYMENT_QR_CODE_ONLY}" alt="UPI QR Code" />
+      <div class="qr-upi">UPI ID: <strong>${PAYMENT_UPI_ID}</strong></div>
+      <div class="qr-sub">${PAYMENT_UPI_PAYEE} (${PAYMENT_UPI_PHONE})</div>
+      <div class="qr-apps">GPay • PhonePe • Paytm • BHIM • Any UPI</div>
     </div>
 
     <!-- Store Footer Notice -->
@@ -434,6 +483,54 @@ export const PrintService = {
       margin-bottom: 4px;
       text-transform: uppercase;
     }
+    .a4-qr-box {
+      width: 170px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #fafbfc;
+      padding: 10px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .a4-qr-title {
+      font-size: 11px;
+      font-weight: 800;
+      color: #1e1b4b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .a4-qr-img {
+      width: 110px;
+      height: 110px;
+      display: block;
+      margin: 0 auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 2px;
+      background: #fff;
+    }
+    .a4-qr-upi {
+      font-size: 9.5px;
+      font-family: monospace;
+      color: #1e1b4b;
+      margin-top: 5px;
+    }
+    .a4-qr-payee {
+      font-size: 8.5px;
+      color: #4b5563;
+      margin-top: 2px;
+      font-weight: 500;
+    }
+    .a4-qr-apps {
+      font-size: 8px;
+      color: #6b7280;
+      margin-top: 2px;
+      font-weight: 600;
+    }
     .summary-card {
       width: 320px;
       border: 1px solid #e2e8f0;
@@ -588,6 +685,15 @@ export const PrintService = {
         <div style="margin-top: 10px; font-weight: 600; color: #1e1b4b;">
           ${settings.footerMessage || 'Thank you for shopping with UMA FOOTWEARS!'}
         </div>
+      </div>
+
+      <!-- UPI Payment QR Code -->
+      <div class="a4-qr-box">
+        <div class="a4-qr-title">Scan &amp; Pay via UPI</div>
+        <img class="a4-qr-img" src="${PAYMENT_QR_CODE_ONLY}" alt="UPI QR Code" />
+        <div class="a4-qr-upi">UPI ID: <strong>${PAYMENT_UPI_ID}</strong></div>
+        <div class="a4-qr-payee">${PAYMENT_UPI_PAYEE} • ${PAYMENT_UPI_PHONE}</div>
+        <div class="a4-qr-apps">GPay • PhonePe • Paytm • BHIM</div>
       </div>
 
       <div class="summary-card">

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Printer, X, CheckCircle, Footprints, Receipt, FileText, Smartphone, Banknote } from 'lucide-react';
+import { Printer, X, CheckCircle, Footprints, Receipt, FileText, Smartphone, Banknote, QrCode, Copy, Check } from 'lucide-react';
 import { SaleTransaction } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { PrintService } from '../services/printService';
+import { PAYMENT_UPI_ID, PAYMENT_UPI_PAYEE, PAYMENT_UPI_PHONE, PAYMENT_QR_CODE_ONLY, PAYMENT_QR_IMAGE } from '../assets/paymentQr';
 
 interface PrintBillModalProps {
   transaction: SaleTransaction | null;
@@ -11,15 +12,22 @@ interface PrintBillModalProps {
 
 export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onClose }) => {
   const { shopSettings } = useAuth();
-  const [format, setFormat] = useState<'thermal' | 'a4'>('thermal');
+  const [format, setFormat] = useState<'thermal' | 'a4' | 'upi-qr'>('thermal');
   const [isPrinting, setIsPrinting] = useState(false);
+  const [copiedUpi, setCopiedUpi] = useState(false);
 
   if (!transaction) return null;
 
-  const handlePrint = (selectedFormat: 'thermal' | 'a4' = format) => {
+  const handlePrint = (selectedFormat: 'thermal' | 'a4' = format === 'a4' ? 'a4' : 'thermal') => {
     setIsPrinting(true);
     PrintService.printReceipt(transaction, shopSettings, selectedFormat);
     setTimeout(() => setIsPrinting(false), 1500);
+  };
+
+  const handleCopyUpi = () => {
+    navigator.clipboard.writeText(PAYMENT_UPI_ID);
+    setCopiedUpi(true);
+    setTimeout(() => setCopiedUpi(false), 2000);
   };
 
   // Automatically trigger the printer dialog once when the bill modal opens
@@ -56,7 +64,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               <h3 className="font-bold text-sm text-[#1E1B4B]">
                 Invoice #{transaction.billNo}
               </h3>
-              <p className="text-[11px] text-[#64748B]">Ready to print or save</p>
+              <p className="text-[11px] text-[#64748B]">Ready to print or scan QR</p>
             </div>
           </div>
 
@@ -74,7 +82,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 title="80mm Thermal Receipt Paper (POS Printers)"
               >
                 <Receipt className="w-3.5 h-3.5" />
-                <span>80mm Thermal</span>
+                <span>Thermal</span>
               </button>
               <button
                 type="button"
@@ -87,7 +95,20 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 title="A4 Standard Full Page Invoice (Inkjet/Laser Printers)"
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>Standard A4</span>
+                <span>A4</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormat('upi-qr')}
+                className={`flex items-center space-x-1 px-2.5 py-1 rounded-md transition ${
+                  format === 'upi-qr'
+                    ? 'bg-white text-[#6D5DFB] shadow-xs'
+                    : 'text-[#64748B] hover:text-[#1E1B4B]'
+                }`}
+                title="Show Google Pay UPI QR Code on screen for scanning"
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan QR</span>
               </button>
             </div>
 
@@ -216,10 +237,90 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 </div>
               </div>
 
+              {/* UPI QR Payment Box */}
+              <div className="border border-dashed border-gray-400 rounded-lg p-2.5 my-2 text-center bg-gray-50 flex flex-col items-center">
+                <div className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-1">
+                  Scan &amp; Pay via UPI
+                </div>
+                <img
+                  src={PAYMENT_QR_CODE_ONLY}
+                  alt="UPI Payment QR Code"
+                  className="w-28 h-28 object-contain bg-white p-1 rounded border border-gray-300"
+                />
+                <div className="text-[9.5px] font-mono font-bold text-gray-900 mt-1">
+                  UPI ID: {PAYMENT_UPI_ID}
+                </div>
+                <div className="text-[8.5px] text-gray-600 font-medium">
+                  {PAYMENT_UPI_PAYEE} ({PAYMENT_UPI_PHONE})
+                </div>
+                <div className="text-[8px] text-gray-500 font-medium mt-0.5">
+                  GPay • PhonePe • Paytm • BHIM • Any UPI
+                </div>
+              </div>
+
               {/* Footer Notice */}
               <div className="text-center text-[9px] text-gray-500 pt-3 border-t border-dashed border-gray-300 leading-tight">
                 <p>{shopSettings.footerMessage || 'Thank you for shopping with us! Goods once sold can be exchanged within 7 days with valid receipt.'}</p>
                 <p className="font-bold uppercase tracking-wider text-gray-700 mt-1">*** HAVE A WONDERFUL DAY ***</p>
+              </div>
+            </div>
+          ) : format === 'upi-qr' ? (
+            /* SCAN & PAY DIRECT CARD PREVIEW */
+            <div className="flex flex-col items-center justify-center p-2 max-w-sm mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden w-full max-w-[340px] text-center p-4">
+                {/* Amount to Pay */}
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-3 text-center">
+                  <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">
+                    Amount to Pay
+                  </div>
+                  <div className="text-2xl font-black text-emerald-900 mt-0.5 font-mono">
+                    ₹{transaction.finalAmount.toFixed(2)}
+                  </div>
+                  <div className="text-[11px] text-emerald-600 font-medium mt-0.5">
+                    Bill #{transaction.billNo} • {transaction.customerName || 'Walk-in'}
+                  </div>
+                </div>
+
+                {/* Google Pay QR Card Image */}
+                <div className="relative inline-block mx-auto rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white p-2">
+                  <img
+                    src={PAYMENT_QR_IMAGE}
+                    alt="Google Pay UPI QR Card"
+                    className="w-64 h-auto mx-auto object-contain rounded-lg"
+                  />
+                </div>
+
+                {/* UPI ID Details */}
+                <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-left">
+                  <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">UPI ID:</div>
+                  <div className="text-xs font-mono font-bold text-slate-800 flex items-center justify-between mt-0.5">
+                    <span>{PAYMENT_UPI_ID}</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyUpi}
+                      className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-white border border-slate-200 text-[10px] text-[#6D5DFB] hover:bg-slate-100 font-sans font-semibold transition"
+                    >
+                      {copiedUpi ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span className="text-emerald-600">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1">
+                    Payee: <strong className="text-slate-700">{PAYMENT_UPI_PAYEE}</strong> ({PAYMENT_UPI_PHONE})
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-gray-500 mt-2 font-medium">
+                  Scan with Google Pay, PhonePe, Paytm, BHIM, or any UPI app.
+                </p>
               </div>
             </div>
           ) : (
@@ -289,13 +390,27 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               </table>
 
               {/* A4 Summary & Payment */}
-              <div className="flex justify-between items-start pt-2 border-t border-gray-200 text-[10px]">
-                <div className="space-y-1 text-gray-600 max-w-[200px]">
-                  <p className="font-bold text-gray-800">Terms & Conditions:</p>
-                  <p className="text-[9px] leading-tight">Goods once sold can be exchanged within 7 days in unused condition with original bill.</p>
-                  <p className="text-[9px] font-semibold text-[#6D5DFB] mt-1">{shopSettings.footerMessage}</p>
+              <div className="flex justify-between items-start gap-2 pt-2 border-t border-gray-200 text-[10px]">
+                <div className="space-y-1 text-gray-600 max-w-[130px]">
+                  <p className="font-bold text-gray-800">Terms &amp; Conditions:</p>
+                  <p className="text-[8.5px] leading-tight">Goods once sold can be exchanged within 7 days in unused condition with original bill.</p>
+                  <p className="text-[8.5px] font-semibold text-[#6D5DFB] mt-1">{shopSettings.footerMessage}</p>
                 </div>
-                <div className="w-[200px] space-y-1 font-mono text-right">
+
+                {/* A4 UPI QR Box */}
+                <div className="flex flex-col items-center justify-center p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-center min-w-[125px]">
+                  <span className="text-[9px] font-bold text-gray-800 mb-1 uppercase tracking-tight">Scan &amp; Pay via UPI</span>
+                  <img
+                    src={PAYMENT_QR_CODE_ONLY}
+                    alt="UPI Payment QR Code"
+                    className="w-20 h-20 object-contain bg-white p-1 rounded border border-gray-200"
+                  />
+                  <span className="text-[8px] font-mono font-bold text-gray-900 mt-1">{PAYMENT_UPI_ID}</span>
+                  <span className="text-[7.5px] text-gray-500">{PAYMENT_UPI_PAYEE}</span>
+                  <span className="text-[7px] text-gray-400 font-medium">GPay • PhonePe • Paytm • BHIM</span>
+                </div>
+
+                <div className="w-[165px] space-y-1 font-mono text-right">
                   <div className="flex justify-between text-gray-600">
                     <span>Subtotal:</span>
                     <span>₹{transaction.subtotal.toFixed(2)}</span>
@@ -333,7 +448,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
           </button>
           
           <button
-            onClick={() => handlePrint(format)}
+            onClick={() => handlePrint(format === 'a4' ? 'a4' : 'thermal')}
             disabled={isPrinting}
             className="w-2/3 py-2.5 px-4 bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg flex items-center justify-center space-x-2 transition disabled:opacity-50"
           >
@@ -341,6 +456,8 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
             <span>
               {isPrinting
                 ? 'Opening Printer...'
+                : format === 'upi-qr'
+                ? 'Print Receipt (with QR)'
                 : `Print Bill (${format === 'thermal' ? '80mm Thermal' : 'Standard A4'})`}
             </span>
           </button>
