@@ -1483,8 +1483,8 @@ export const StorageService = {
     }
     const builtIn = BUILTIN_LEDGER_COLUMNS
       .filter((col) => {
-        // Never filter out payment or type
-        if (col.id === 'payment' || col.id === 'type') return true;
+        // Never filter out payment or type or soldPrice
+        if (col.id === 'payment' || col.id === 'type' || col.id === 'soldPrice') return true;
         // Filter out built-in columns that admin has deleted
         const deletedKey = `__deleted_${col.id}`;
         return labels[deletedKey] !== 'true';
@@ -1497,7 +1497,7 @@ export const StorageService = {
   },
 
   getLedgerColumns(): string[] {
-    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'soldPrice', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
     const settings = this.getShopSettings();
     let cols: string[] = [];
 
@@ -1518,6 +1518,17 @@ export const StorageService = {
     }
 
     let changed = false;
+
+    // Auto-migrate: ensure 'soldPrice' is included
+    if (!cols.includes('soldPrice')) {
+      const mrpIdx = cols.indexOf('mrp');
+      if (mrpIdx !== -1) {
+        cols.splice(mrpIdx + 1, 0, 'soldPrice');
+      } else {
+        cols.push('soldPrice');
+      }
+      changed = true;
+    }
 
     // Auto-migrate: ensure 'type' is included
     if (!cols.includes('type')) {
@@ -1664,7 +1675,7 @@ export const StorageService = {
   },
 
   resetColumns(): void {
-    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
+    const defaultIds = ['billNoDate', 'pNo', 'articleNo', 'mrp', 'soldPrice', 'brand', 'type', 'wholeSalePct', 'wholeSaleValue', 'sizeAvailable', 'payment'];
     localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(defaultIds));
     // Clear all labels AND deleted markers
     localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify({}));
@@ -1744,7 +1755,7 @@ export const StorageService = {
    * Returns true (visible) by default if not explicitly set.
    */
   isColumnStaffVisible(colId: string): boolean {
-    if (colId === 'payment' || colId === 'type') return true;
+    if (colId === 'payment' || colId === 'type' || colId === 'soldPrice') return true;
     // Check custom columns first
     const customCols = this.getCustomColumns();
     const customCol = customCols.find((c) => c.id === colId);
@@ -1775,6 +1786,11 @@ export const StorageService = {
   getVisibleColumnsForRole(userRole: 'admin' | 'staff'): string[] {
     const allVisible = this.getLedgerColumns();
     let cols = userRole === 'admin' ? allVisible : allVisible.filter((colId) => this.isColumnStaffVisible(colId));
+    if (!cols.includes('soldPrice')) {
+      const mrpIdx = cols.indexOf('mrp');
+      if (mrpIdx !== -1) cols.splice(mrpIdx + 1, 0, 'soldPrice');
+      else cols.push('soldPrice');
+    }
     if (!cols.includes('payment')) {
       const sizeIdx = cols.indexOf('sizeAvailable');
       if (sizeIdx !== -1) cols.splice(sizeIdx + 1, 0, 'payment');
@@ -1930,8 +1946,13 @@ export const StorageService = {
           : undefined;
 
         if (cloudCols) {
-          // Guarantee 'type' and 'payment' in cloud columns if not explicitly deleted
+          // Guarantee 'soldPrice', 'type' and 'payment' in cloud columns if not explicitly deleted
           const labels = cloudLabels || this.getColumnLabels();
+          if (!cloudCols.includes('soldPrice') && labels['__deleted_soldPrice'] !== 'true') {
+            const mrpIdx = cloudCols.indexOf('mrp');
+            if (mrpIdx !== -1) cloudCols.splice(mrpIdx + 1, 0, 'soldPrice');
+            else cloudCols.push('soldPrice');
+          }
           if (!cloudCols.includes('type') && labels['__deleted_type'] !== 'true') {
             const brandIdx = cloudCols.indexOf('brand');
             if (brandIdx !== -1) cloudCols.splice(brandIdx + 1, 0, 'type');

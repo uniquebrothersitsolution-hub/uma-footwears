@@ -15,6 +15,7 @@ export const BUILTIN_LEDGER_COLUMNS: LedgerColumnConfig[] = [
   { id: 'pNo', label: 'P NO', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'articleNo', label: 'ARTICLE NO', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'mrp', label: 'MRP', dataType: 'currency', defaultVisible: true, staffVisible: true },
+  { id: 'soldPrice', label: 'SOLD PRICE', dataType: 'currency', defaultVisible: true, staffVisible: true },
   { id: 'brand', label: 'BRAND', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'type', label: 'TYPE', dataType: 'text', defaultVisible: true, staffVisible: true },
   { id: 'wholeSalePct', label: 'WHOLE SALE %', dataType: 'number', defaultVisible: true, staffVisible: false, adminOnly: true },
@@ -39,6 +40,7 @@ export const DEFAULT_VISIBLE_COLUMN_IDS = [
   'pNo',
   'articleNo',
   'mrp',
+  'soldPrice',
   'brand',
   'type',
   'wholeSalePct',
@@ -249,6 +251,13 @@ export const ExportExcelService = {
           case 'mrp':
             row['MRP'] = Number(effectiveMRP.toFixed(2));
             break;
+          case 'soldPrice': {
+            const soldVal = (item.discountedPrice !== undefined && item.discountedPrice !== null && !isNaN(Number(item.discountedPrice)))
+              ? Number(item.discountedPrice)
+              : (item.price > 0 ? item.price : effectiveMRP);
+            row['SOLD PRICE'] = Number(soldVal.toFixed(2));
+            break;
+          }
           case 'brand':
             row['BRAND'] = tx.customFields?.['brand'] || derivedBrand;
             break;
@@ -365,6 +374,12 @@ export const ExportExcelService = {
         case 'billedBy':
           totalsRow['BILLED BY'] = '';
           break;
+        case 'mrp':
+          totalsRow['MRP'] = Number(totalRetail.toFixed(2));
+          break;
+        case 'soldPrice':
+          totalsRow['SOLD PRICE'] = Number(totalRevenue.toFixed(2));
+          break;
         case 'amount':
           totalsRow['AMOUNT (₹)'] = Number(totalRevenue.toFixed(2));
           break;
@@ -412,6 +427,7 @@ export const ExportExcelService = {
       pNo: 16,
       articleNo: 20,
       mrp: 14,
+      soldPrice: 16,
       brand: 16,
       type: 16,
       wholeSalePct: 16,

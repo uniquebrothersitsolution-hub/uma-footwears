@@ -73,21 +73,37 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     setAllColumns(StorageService.getAllLedgerColumns());
   }, [userRole]);
 
-  // Ensure payment column is synced to localStorage and visible immediately on mount
+  // Ensure soldPrice and payment columns are synced to localStorage and visible immediately on mount
   useEffect(() => {
     const stored = StorageService.getLedgerColumns();
-    if (!stored.includes('payment')) {
-      const sizeIdx = stored.indexOf('sizeAvailable');
-      if (sizeIdx !== -1) stored.splice(sizeIdx + 1, 0, 'payment');
-      else stored.push('payment');
-      StorageService.saveLedgerColumns(stored);
+    let updated = [...stored];
+    let changed = false;
+    if (!updated.includes('soldPrice')) {
+      const mrpIdx = updated.indexOf('mrp');
+      if (mrpIdx !== -1) updated.splice(mrpIdx + 1, 0, 'soldPrice');
+      else updated.push('soldPrice');
+      changed = true;
+    }
+    if (!updated.includes('payment')) {
+      const sizeIdx = updated.indexOf('sizeAvailable');
+      if (sizeIdx !== -1) updated.splice(sizeIdx + 1, 0, 'payment');
+      else updated.push('payment');
+      changed = true;
+    }
+    if (changed) {
+      StorageService.saveLedgerColumns(updated);
       setVisibleColumns(StorageService.getVisibleColumnsForRole(userRole || 'staff'));
     }
   }, []);
 
-  // Guarantee essential columns like 'payment' and 'type' are unconditionally in effectiveVisibleColumns
+  // Guarantee essential columns like 'soldPrice', 'payment' and 'type' are unconditionally in effectiveVisibleColumns
   const effectiveVisibleColumns = React.useMemo(() => {
     let cols = [...visibleColumns];
+    if (!cols.includes('soldPrice')) {
+      const mrpIdx = cols.indexOf('mrp');
+      if (mrpIdx !== -1) cols.splice(mrpIdx + 1, 0, 'soldPrice');
+      else cols.push('soldPrice');
+    }
     if (!cols.includes('type')) {
       const brandIdx = cols.indexOf('brand');
       if (brandIdx !== -1) cols.splice(brandIdx + 1, 0, 'type');
@@ -836,6 +852,32 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                                   )}
                                 </td>
                               );
+
+                            case 'soldPrice': {
+                              const soldVal = (item.discountedPrice !== undefined && item.discountedPrice !== null && !isNaN(Number(item.discountedPrice)))
+                                ? Number(item.discountedPrice)
+                                : (item.price > 0 ? item.price : effectiveMRP);
+                              const isDiscounted = effectiveMRP > 0 && soldVal < effectiveMRP;
+                              const discountSaved = isDiscounted ? effectiveMRP - soldVal : 0;
+
+                              return (
+                                <td key={colId} className="py-2.5 px-4 font-mono whitespace-nowrap">
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-emerald-600 text-xs font-semibold">₹</span>
+                                    <span className="text-xs font-extrabold text-emerald-700">{soldVal.toFixed(2)}</span>
+                                  </div>
+                                  {item.quantity > 1 ? (
+                                    <div className="text-[10px] text-[#64748B] font-mono">
+                                      ×{item.quantity} = ₹{(soldVal * item.quantity).toFixed(2)}
+                                    </div>
+                                  ) : isDiscounted ? (
+                                    <div className="text-[9px] text-amber-600 font-semibold">
+                                      Save ₹{discountSaved.toFixed(0)}
+                                    </div>
+                                  ) : null}
+                                </td>
+                              );
+                            }
 
                             case 'brand':
                               return (
