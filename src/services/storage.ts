@@ -4,6 +4,7 @@ import { BUILTIN_LEDGER_COLUMNS } from './exportExcel';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'uma_footwears_products',
+  PRODUCT_ORDER: 'uma_footwears_product_order',
   TRANSACTIONS: 'uma_footwears_transactions',
   ACCOUNTS: 'uma_footwears_accounts',
   SETTINGS: 'uma_footwears_settings',
@@ -523,33 +524,98 @@ export const StorageService = {
   // ==========================================
   // PRODUCTS
   // ==========================================
+  getProductOrder(): string[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.PRODUCT_ORDER);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return [];
+  },
+
+  saveProductOrder(orderKeys: string[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.PRODUCT_ORDER, JSON.stringify(orderKeys));
+    } catch {}
+  },
+
+  resetProductOrder(): Product[] {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.PRODUCT_ORDER);
+    } catch {}
+    const sorted = [...this.getProducts()].sort((a, b) => {
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+    this.saveProducts(sorted);
+    return sorted;
+  },
+
+  sortProductsByOrder(products: Product[]): Product[] {
+    const savedOrder = this.getProductOrder();
+    if (savedOrder.length > 0) {
+      const orderMap = new Map<string, number>();
+      savedOrder.forEach((key, idx) => {
+        if (key) orderMap.set(String(key).toLowerCase(), idx);
+      });
+
+      return [...products].sort((a, b) => {
+        const codeA = (a.code || '').toLowerCase();
+        const codeB = (b.code || '').toLowerCase();
+        const idA = (a.id || '').toLowerCase();
+        const idB = (b.id || '').toLowerCase();
+
+        const indexA = orderMap.has(codeA) ? orderMap.get(codeA)! : (orderMap.has(idA) ? orderMap.get(idA)! : 999999);
+        const indexB = orderMap.has(codeB) ? orderMap.get(codeB)! : (orderMap.has(idB) ? orderMap.get(idB)! : 999999);
+
+        if (indexA !== indexB) {
+          return indexA - indexB;
+        }
+        return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+      });
+    }
+
+    // Default natural code ordering (e.g. N1-WU1020, N1-1721G, N2-X PRO, N3-JC1150 ...)
+    return [...products].sort((a, b) => {
+      return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
+  },
+
   getProducts(): Product[] {
     const data = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     if (!data) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
-      return INITIAL_PRODUCTS;
+      const initialSorted = this.sortProductsByOrder(INITIAL_PRODUCTS);
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(initialSorted));
+      return initialSorted;
     }
     try {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
         // If local storage still holds old products, automatically flush and replace with INITIAL_PRODUCTS
         if (parsed.some(p => p.code?.startsWith('UMA-') || p.code === 'N 1' || p.code === '1721G')) {
-          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
-          return INITIAL_PRODUCTS;
+          const initialSorted = this.sortProductsByOrder(INITIAL_PRODUCTS);
+          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(initialSorted));
+          return initialSorted;
         }
-        return parsed.map((p: Product) => ({
+        const mapped = parsed.map((p: Product) => ({
           ...p,
           sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10']
         }));
+        return this.sortProductsByOrder(mapped);
       }
-      return INITIAL_PRODUCTS;
+      return this.sortProductsByOrder(INITIAL_PRODUCTS);
     } catch {
-      return INITIAL_PRODUCTS;
+      return this.sortProductsByOrder(INITIAL_PRODUCTS);
     }
   },
 
   saveProducts(products: Product[]): void {
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    const orderKeys = products.map(p => p.code || p.id).filter(Boolean);
+    this.saveProductOrder(orderKeys);
     this.emitDataChange();
   },
 
@@ -589,8 +655,9 @@ export const StorageService = {
         sizes: Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['7', '8', '9', '10']
       }));
 
-      this.saveProducts(products);
-      return products;
+      const sortedProducts = this.sortProductsByOrder(products);
+      this.saveProducts(sortedProducts);
+      return sortedProducts;
     } catch (e) {
       console.error('Error fetching cloud products:', e);
       return this.getProducts();

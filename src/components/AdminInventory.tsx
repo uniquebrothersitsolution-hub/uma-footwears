@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Plus, Edit2, Trash2, Search, DollarSign, Tag, Check, X, ShieldAlert, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Package, Plus, Edit2, Trash2, Search, DollarSign, Tag, Check, X, ShieldAlert, Sparkles, AlertTriangle, RefreshCw, GripVertical, ChevronUp, ChevronDown, ArrowUpDown, CheckCircle2 } from 'lucide-react';
 import { Product, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
 import { isSupabaseConfigured } from '../services/supabaseClient';
@@ -12,6 +12,11 @@ export const AdminInventory: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Drag and drop & reordering state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [orderToast, setOrderToast] = useState<string | null>(null);
 
   // Add / Edit Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -167,6 +172,106 @@ export const AdminInventory: React.FC = () => {
 
   const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
 
+  // Check if filtering is active (reordering is cleanest on the full catalog)
+  const isFiltered = searchQuery.trim() !== '' || categoryFilter !== 'All';
+
+  const showToast = (message: string) => {
+    setOrderToast(message);
+    setTimeout(() => {
+      setOrderToast(null);
+    }, 3500);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    if (isFiltered) return;
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    if (isFiltered) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    if (isFiltered) return;
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    const updated = [...products];
+    const [movedItem] = updated.splice(draggedIndex, 1);
+    updated.splice(targetIndex, 0, movedItem);
+
+    setProducts(updated);
+    StorageService.saveProducts(updated);
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+    showToast(`Rearranged "${movedItem.name}" to position #${targetIndex + 1}`);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleMoveProduct = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= products.length) return;
+
+    const updated = [...products];
+    const [movedItem] = updated.splice(index, 1);
+    updated.splice(targetIndex, 0, movedItem);
+
+    setProducts(updated);
+    StorageService.saveProducts(updated);
+    showToast(`Moved "${movedItem.name}" to position #${targetIndex + 1}`);
+  };
+
+  const handleQuickSort = (type: 'code' | 'name' | 'category' | 'price-asc' | 'price-desc' | 'stock-asc' | 'reset') => {
+    let sorted = [...products];
+    let label = '';
+
+    if (type === 'code') {
+      sorted.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' }));
+      label = 'Natural Footwear Code (N1 → N48)';
+    } else if (type === 'name') {
+      sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      label = 'Product Name (A → Z)';
+    } else if (type === 'category') {
+      sorted.sort((a, b) => {
+        const catComp = (a.category || '').localeCompare(b.category || '');
+        if (catComp !== 0) return catComp;
+        return (a.code || '').localeCompare(b.code || '', undefined, { numeric: true, sensitivity: 'base' });
+      });
+      label = 'Brand & Category (A → Z)';
+    } else if (type === 'price-asc') {
+      sorted.sort((a, b) => a.price - b.price);
+      label = 'Retail MRP (Low → High)';
+    } else if (type === 'price-desc') {
+      sorted.sort((a, b) => b.price - a.price);
+      label = 'Retail MRP (High → Low)';
+    } else if (type === 'stock-asc') {
+      sorted.sort((a, b) => a.stock - b.stock);
+      label = 'Stock (Low Stock First)';
+    } else if (type === 'reset') {
+      sorted = StorageService.resetProductOrder();
+      label = 'Default Seed Catalog Order';
+    }
+
+    setProducts(sorted);
+    StorageService.saveProducts(sorted);
+    showToast(`Catalog reordered by ${label} and saved`);
+  };
+
   return (
     <div className="space-y-6">
       
@@ -240,12 +345,104 @@ export const AdminInventory: React.FC = () => {
         ))}
       </div>
 
+      {/* Reorder Toast Notification */}
+      {orderToast && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-800 text-xs font-semibold shadow-sm animate-fade-in">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <span>{orderToast}</span>
+          </div>
+          <button onClick={() => setOrderToast(null)} className="text-emerald-500 hover:text-emerald-800">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Reorder & Quick-Sort Toolbar */}
+      {userRole === 'admin' && (
+        <div className="bg-white border border-[#E7E5EF] rounded-2xl p-3.5 px-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center space-x-2.5">
+            <div className="p-2 bg-[#EEEBFF] text-[#6D5DFB] rounded-xl border border-[#E7E5EF]">
+              <ArrowUpDown className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="font-bold text-[#1E1B4B]">Product Rearrangement & Presets</span>
+              <p className="text-[11px] text-[#64748B]">
+                {isFiltered
+                  ? '⚠️ Clear search or select "All" category to enable drag-and-drop & sequence reordering.'
+                  : 'Drag ⠿ handle or click ▲ ▼ buttons to move items. Reordering is saved automatically.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleQuickSort('code')}
+              className="px-2.5 py-1.5 bg-[#EEEBFF] hover:bg-[#6D5DFB] text-[#6D5DFB] hover:text-white rounded-xl font-bold transition border border-[#6D5DFB]/20 flex items-center space-x-1 shadow-xs"
+              title="Sort products naturally by code: N1, N2, N3 ... N48"
+            >
+              <span>🔢 Code (N1 → N48)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('name')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] hover:text-[#6D5DFB] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort alphabetically by product name"
+            >
+              <span>🔤 Name (A-Z)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('category')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] hover:text-[#6D5DFB] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort by brand/category"
+            >
+              <span>🏷️ Brand</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('price-asc')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] hover:text-[#6D5DFB] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort lowest price first"
+            >
+              <span>Price ↑</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('price-desc')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] hover:text-[#6D5DFB] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort highest price first"
+            >
+              <span>Price ↓</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('stock-asc')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-amber-50 text-[#1E1B4B] hover:text-amber-800 rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort lowest stock first for restocking"
+            >
+              <span>Low Stock</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('reset')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-slate-200 text-[#64748B] hover:text-[#1E1B4B] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Reset order to default seed order"
+            >
+              <span>↺ Reset</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Products Table */}
       <div className="bg-white border border-[#E7E5EF] rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-[#1E1B4B]">
             <thead className="bg-[#F7F8FC] border-b border-[#E7E5EF] text-[#64748B] font-bold uppercase tracking-wider">
               <tr>
+                <th className="py-3.5 px-3 text-center w-28">Order / #</th>
                 <th className="py-3.5 px-4">Code / Item</th>
                 <th className="py-3.5 px-4">Category</th>
                 <th className="py-3.5 px-4">Sizes & Colors</th>
@@ -269,19 +466,82 @@ export const AdminInventory: React.FC = () => {
             <tbody className="divide-y divide-[#E7E5EF]">
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={userRole === 'admin' ? 8 : 6} className="py-12 text-center text-[#64748B]">
+                  <td colSpan={userRole === 'admin' ? 9 : 7} className="py-12 text-center text-[#64748B]">
                     No matching footwear products found.
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map((product) => (
-                  <tr key={product.id} className="hover:bg-[#F7F8FC]/80 transition">
-                    
-                    {/* Name & Code */}
-                    <td className="py-3.5 px-4">
-                      <div className="font-bold text-[#1E1B4B] text-sm">{product.name}</div>
-                      <div className="text-[11px] font-mono text-[#6D5DFB] font-semibold">{product.code}</div>
-                    </td>
+                filteredProducts.map((product) => {
+                  const originalIndex = products.findIndex(p => p.id === product.id || p.code === product.code);
+                  const isItemDragged = draggedIndex === originalIndex;
+                  const isItemDragOver = dragOverIndex === originalIndex && draggedIndex !== originalIndex;
+
+                  return (
+                    <tr
+                      key={product.id}
+                      draggable={userRole === 'admin' && !isFiltered}
+                      onDragStart={(e) => handleDragStart(e, originalIndex)}
+                      onDragOver={(e) => handleDragOver(e, originalIndex)}
+                      onDrop={(e) => handleDrop(e, originalIndex)}
+                      onDragEnd={handleDragEnd}
+                      className={`transition ${
+                        isItemDragged ? 'opacity-40 bg-[#EEEBFF]' : ''
+                      } ${
+                        isItemDragOver ? 'border-t-2 border-[#6D5DFB] bg-[#EEEBFF]/30' : 'hover:bg-[#F7F8FC]/80'
+                      }`}
+                    >
+                      {/* Order / Sequence / Drag Handle / Move Buttons */}
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center space-x-1">
+                          {userRole === 'admin' && (
+                            <div
+                              draggable={!isFiltered}
+                              onDragStart={(e) => handleDragStart(e, originalIndex)}
+                              className={`p-1 rounded text-[#94A3B8] select-none ${
+                                !isFiltered
+                                  ? 'hover:text-[#6D5DFB] hover:bg-[#EEEBFF] cursor-grab active:cursor-grabbing'
+                                  : 'opacity-25 cursor-not-allowed'
+                              } transition`}
+                              title={!isFiltered ? "Click & drag to reorder item" : "Clear search/filter to drag"}
+                            >
+                              <GripVertical className="w-4 h-4" />
+                            </div>
+                          )}
+
+                          <span className="w-8 text-center font-mono font-bold text-xs px-1.5 py-0.5 bg-[#EEEBFF] text-[#6D5DFB] rounded-md border border-[#E7E5EF]">
+                            #{originalIndex + 1}
+                          </span>
+
+                          {userRole === 'admin' && (
+                            <div className="flex flex-col space-y-0.5">
+                              <button
+                                type="button"
+                                disabled={originalIndex <= 0 || isFiltered}
+                                onClick={() => handleMoveProduct(originalIndex, 'up')}
+                                className="p-0.5 rounded text-[#94A3B8] hover:text-[#6D5DFB] hover:bg-[#EEEBFF] disabled:opacity-20 disabled:hover:bg-transparent transition"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={originalIndex >= products.length - 1 || isFiltered}
+                                onClick={() => handleMoveProduct(originalIndex, 'down')}
+                                className="p-0.5 rounded text-[#94A3B8] hover:text-[#6D5DFB] hover:bg-[#EEEBFF] disabled:opacity-20 disabled:hover:bg-transparent transition"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Name & Code */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold text-[#1E1B4B] text-sm">{product.name}</div>
+                        <div className="text-[11px] font-mono text-[#6D5DFB] font-semibold">{product.code}</div>
+                      </td>
 
                     {/* Category */}
                     <td className="py-3.5 px-4">
@@ -393,8 +653,9 @@ export const AdminInventory: React.FC = () => {
                     )}
 
                   </tr>
-                ))
-              )}
+                );
+              })
+            )}
             </tbody>
           </table>
         </div>
