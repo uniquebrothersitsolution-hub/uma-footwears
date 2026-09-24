@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers, AlertTriangle, Search, Barcode, X } from 'lucide-react';
 import { Product, BillItem, SaleTransaction, ProductColor } from '../types';
 import { StorageService } from '../services/storage';
 import { deriveFootwearType } from '../services/exportExcel';
@@ -17,6 +17,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [productNameInput, setProductNameInput] = useState<string>('');
+  const [codeSearchQuery, setCodeSearchQuery] = useState<string>('');
+  const [isCodeDropdownOpen, setIsCodeDropdownOpen] = useState<boolean>(false);
+  const codeSearchRef = useRef<HTMLDivElement>(null);
   
   // Available sizes for current selection
   const [availableSizes, setAvailableSizes] = useState<string[]>(DEFAULT_SIZES);
@@ -39,6 +42,26 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [saleSuccessMessage, setSaleSuccessMessage] = useState<string>('');
   const [cartErrorMessage, setCartErrorMessage] = useState<string>('');
 
+  // Close code search dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (codeSearchRef.current && !codeSearchRef.current.contains(e.target as Node)) {
+        setIsCodeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter matching products for live code search
+  const matchingCodeProducts = codeSearchQuery.trim()
+    ? products.filter(p =>
+        p.code?.toLowerCase().includes(codeSearchQuery.trim().toLowerCase()) ||
+        p.name?.toLowerCase().includes(codeSearchQuery.trim().toLowerCase()) ||
+        p.category?.toLowerCase().includes(codeSearchQuery.trim().toLowerCase())
+      )
+    : [];
+
   // Load products on mount & subscribe to realtime stock updates across devices
   useEffect(() => {
     setProducts(StorageService.getProducts());
@@ -53,28 +76,67 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     };
   }, []);
 
-  // When Product Selection Changes
-  const handleProductSelect = (prodId: string) => {
-    setSelectedProductId(prodId);
+  // Apply selected product details across all POS fields
+  const applySelectedProduct = (prod: Product) => {
+    setSelectedProductId(prod.id);
+    setCodeSearchQuery(prod.code || '');
     setCartErrorMessage('');
-    const prod = products.find(p => p.id === prodId);
+    setProductNameInput(prod.name);
+    const sizes = prod.sizes && prod.sizes.length > 0 ? prod.sizes : DEFAULT_SIZES;
+    setAvailableSizes(sizes);
+    setSelectedSize('');
+    setBasePrice(prod.price);
+    setWholesalePrice(prod.wholesalePrice || 0);
+    setDiscountPercent(prod.discountPercent || 0);
+
+    // Calculate initial discounted price with 2-decimal precision
+    const disc = prod.discountPercent || 0;
+    const netPrice = prod.price - (prod.price * disc) / 100;
+    setDiscountedPrice(Math.round(netPrice * 100) / 100);
+
+    if (prod.stock <= 0) {
+      setCartErrorMessage(`Notice: "${prod.name}" is OUT OF STOCK (0 available in inventory). It cannot be billed.`);
+    }
+  };
+
+  // When Product Selection Changes from Dropdown
+  const handleProductSelect = (prodId: string) => {
+    if (!prodId) {
+      setSelectedProductId('');
+      setCodeSearchQuery('');
+      return;
+    }
+    const prod = products.find(p => p.id === prodId || p.code === prodId);
     if (prod) {
-      setProductNameInput(prod.name);
-      const sizes = prod.sizes && prod.sizes.length > 0 ? prod.sizes : DEFAULT_SIZES;
-      setAvailableSizes(sizes);
-      setSelectedSize('');
-      setBasePrice(prod.price);
-      setWholesalePrice(prod.wholesalePrice || 0);
-      setDiscountPercent(prod.discountPercent || 0);
+      applySelectedProduct(prod);
+    }
+  };
 
-      // Calculate initial discounted price with 2-decimal precision
-      const disc = prod.discountPercent || 0;
-      const netPrice = prod.price - (prod.price * disc) / 100;
-      setDiscountedPrice(Math.round(netPrice * 100) / 100);
+  // Handle typing or barcode scanning in Code Search input
+  const handleCodeSearchChange = (val: string) => {
+    setCodeSearchQuery(val);
+    setIsCodeDropdownOpen(true);
+    const trimmed = val.trim().toLowerCase();
+    if (!trimmed) {
+      if (selectedProductId) setSelectedProductId('');
+      return;
+    }
+    // If exact code match, auto-fill immediately
+    const exactMatch = products.find(p => p.code && p.code.toLowerCase() === trimmed);
+    if (exactMatch) {
+      applySelectedProduct(exactMatch);
+    }
+  };
 
-      if (prod.stock <= 0) {
-        setCartErrorMessage(`Notice: "${prod.name}" is OUT OF STOCK (0 available in inventory). It cannot be billed.`);
+  const handleCodeSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (matchingCodeProducts.length > 0) {
+        applySelectedProduct(matchingCodeProducts[0]);
+        setIsCodeDropdownOpen(false);
       }
+    } else if (e.key === 'Escape') {
+      setIsCodeDropdownOpen(false);
     }
   };
 
@@ -195,6 +257,8 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     // Reset Form
     setSelectedProductId('');
     setProductNameInput('');
+    setCodeSearchQuery('');
+    setIsCodeDropdownOpen(false);
     setAvailableSizes(DEFAULT_SIZES);
     setSelectedSize('');
     setBasePrice('');
@@ -355,41 +419,134 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
 
             <form onSubmit={handleAddToCart} className="space-y-5">
 
-              {/* Product Selection / Name Input */}
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-[#1E1B4B] uppercase tracking-wider">
-                  Product Name / Select Catalog Item
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <select
-                    value={selectedProductId}
-                    onChange={(e) => handleProductSelect(e.target.value)}
-                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
-                  >
-                    <option value="">-- Pick from Catalog --</option>
-                    {products.map(p => (
-                      <option
-                        key={p.id}
-                        value={p.id}
-                        disabled={p.stock <= 0}
-                        className={p.stock <= 0 ? 'text-red-500 bg-red-50' : ''}
-                      >
-                        {p.name} ({p.category}) - ₹{p.price} {p.stock <= 0 ? '⚠️ [OUT OF STOCK]' : `[Stock: ${p.stock}]`}
-                      </option>
-                    ))}
-                  </select>
+              {/* Product Selection / Code Search / Name Input */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-[#1E1B4B] uppercase tracking-wider flex items-center space-x-1.5">
+                    <Barcode className="w-4 h-4 text-[#6D5DFB]" />
+                    <span>Search by Product Code / Pick Catalog Item</span>
+                  </label>
+                  {activeProduct && (
+                    <span className="text-[11px] text-[#6D5DFB] font-mono font-bold bg-[#EEEBFF] px-2.5 py-0.5 rounded-full border border-[#DCD6FC]">
+                      Active Code: {activeProduct.code}
+                    </span>
+                  )}
+                </div>
 
-                  <input
-                    type="text"
-                    placeholder="Or type custom product name..."
-                    value={productNameInput}
-                    onChange={(e) => {
-                      setProductNameInput(e.target.value);
-                      if (selectedProductId) setSelectedProductId('');
-                    }}
-                    required
-                    className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
-                  />
+                {/* Instant Search / Scan by Product Code Input with Live Suggestions */}
+                <div ref={codeSearchRef} className="relative">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search or scan Product Code (e.g. N1-WU1020, N2-X PRO, BX1256)..."
+                      value={codeSearchQuery}
+                      onChange={(e) => handleCodeSearchChange(e.target.value)}
+                      onKeyDown={handleCodeSearchKeyDown}
+                      onFocus={() => {
+                        if (codeSearchQuery.trim()) setIsCodeDropdownOpen(true);
+                      }}
+                      className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] placeholder:text-[#94A3B8] rounded-xl pl-10 pr-9 py-2.5 text-sm focus:outline-none font-mono font-medium transition"
+                    />
+                    {codeSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeSearchQuery('');
+                          setIsCodeDropdownOpen(false);
+                        }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#1E1B4B] p-0.5 rounded transition"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Floating Suggestions for Code Search */}
+                  {isCodeDropdownOpen && codeSearchQuery.trim() && matchingCodeProducts.length > 0 && (
+                    <div className="absolute z-30 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-[#E7E5EF] rounded-xl shadow-xl divide-y divide-[#F1F5F9]">
+                      {matchingCodeProducts.map(p => (
+                        <div
+                          key={p.id}
+                          onClick={() => {
+                            applySelectedProduct(p);
+                            setIsCodeDropdownOpen(false);
+                          }}
+                          className="p-2.5 hover:bg-[#F7F8FC] cursor-pointer flex items-center justify-between transition group"
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0">
+                            <span className="font-mono text-xs font-bold text-[#6D5DFB] bg-[#EEEBFF] px-2 py-0.5 rounded border border-[#DCD6FC] shrink-0">
+                              {p.code}
+                            </span>
+                            <div className="truncate">
+                              <span className="text-sm font-semibold text-[#1E1B4B] group-hover:text-[#6D5DFB] transition">
+                                {p.name}
+                              </span>
+                              <span className="text-xs text-[#64748B] ml-1.5 font-medium">
+                                ({p.category})
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 ml-2">
+                            <span className="text-xs font-bold text-[#1E1B4B] font-mono">
+                              ₹{p.price}
+                            </span>
+                            <div className="text-[10px]">
+                              {p.stock <= 0 ? (
+                                <span className="text-red-600 font-bold">Out of Stock</span>
+                              ) : (
+                                <span className="text-emerald-700 font-medium">{p.stock} in stock</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Catalog Dropdown + Custom Name Input */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <select
+                      value={selectedProductId}
+                      onChange={(e) => handleProductSelect(e.target.value)}
+                      className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
+                    >
+                      <option value="">-- Pick from Catalog by Code/Name --</option>
+                      {products.map(p => (
+                        <option
+                          key={p.id}
+                          value={p.id}
+                          disabled={p.stock <= 0}
+                          className={p.stock <= 0 ? 'text-red-500 bg-red-50' : ''}
+                        >
+                          {p.code ? `[${p.code}] ` : ''}{p.name} ({p.category}) - ₹{p.price} {p.stock <= 0 ? '⚠️ [OUT OF STOCK]' : `[Stock: ${p.stock}]`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Or type custom product name..."
+                      value={productNameInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setProductNameInput(val);
+                        // Check if typed value matches any product code
+                        const codeMatch = products.find(p => p.code && p.code.toLowerCase() === val.trim().toLowerCase());
+                        if (codeMatch) {
+                          applySelectedProduct(codeMatch);
+                        } else if (selectedProductId && !products.some(p => p.id === selectedProductId && p.name === val)) {
+                          setSelectedProductId('');
+                        }
+                      }}
+                      required
+                      className="w-full bg-[#F7F8FC] border border-[#E7E5EF] focus:border-[#6D5DFB] focus:ring-2 focus:ring-[#EEEBFF] text-[#1E1B4B] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none font-medium"
+                    />
+                  </div>
                 </div>
 
                 {/* Real-time Stock Status Banner */}
