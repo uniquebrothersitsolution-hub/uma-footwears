@@ -34,6 +34,10 @@ export const SupabaseStorageService = {
     return StorageService.deleteTransactionAsync(id);
   },
 
+  async deleteTransactionItem(txIdOrBillNo: string, itemIdx: number): Promise<SaleTransaction[]> {
+    return StorageService.deleteTransactionItem(txIdOrBillNo, itemIdx);
+  },
+
   async getShopSettings(): Promise<ShopSettings> {
     return StorageService.getShopSettings();
   },

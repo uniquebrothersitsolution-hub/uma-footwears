@@ -151,5 +151,10 @@
     box-shadow: none !important;
     overflow: visible !important;
   }
+
+  #print-bill-root.format-50mm {
+    max-width: 50mm !important;
+    padding: 1.5mm !important;
+  }
 }
 

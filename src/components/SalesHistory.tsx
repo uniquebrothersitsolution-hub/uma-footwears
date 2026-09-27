@@ -3,7 +3,7 @@ import {
   History, Search, Printer, Trash2, Calendar, DollarSign, TrendingUp,
   ShoppingBag, FileSpreadsheet, RefreshCw, SlidersHorizontal, Check,
   RotateCcw, Download, Plus, Edit2, X, Tag, Hash, Type, Eye, EyeOff,
-  Banknote, Smartphone, Layers
+  Banknote, Smartphone, Layers, CheckCircle2
 } from 'lucide-react';
 import { SaleTransaction, LedgerColumnConfig, ColumnDataType, Product } from '../types';
 import { StorageService } from '../services/storage';
@@ -21,6 +21,8 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
   const [transactions, setTransactions] = useState<SaleTransaction[]>(() => StorageService.getTransactions());
   const [searchQuery, setSearchQuery] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'yesterday' | 'month'>('all');
+  const [typeFilter, setTypeFilter] = useState('All');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [allColumns, setAllColumns] = useState<LedgerColumnConfig[]>(() => StorageService.getAllLedgerColumns());
@@ -32,6 +34,12 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
   const [editingColId, setEditingColId] = useState<string | null>(null);
   const [editingColLabel, setEditingColLabel] = useState('');
   const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
 
   const loadTransactions = async () => {
     // Show cached immediately
@@ -200,84 +208,339 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
     setTransactions(updated);
   };
 
-  const handleDeleteTransaction = (id: string) => {
-    if (window.confirm('Delete this sale transaction record permanently?')) {
-      const updated = StorageService.deleteTransaction(id);
-      setTransactions(updated);
+  const handleDeleteTransaction = async (txOrId: SaleTransaction | string) => {
+    const tx = typeof txOrId === 'string'
+      ? transactions.find(t => t.id === txOrId || t.billNo === txOrId)
+      : txOrId;
+
+    const billNo = tx?.billNo || (typeof txOrId === 'string' ? txOrId : 'this');
+    const itemCount = tx?.items?.length || 1;
+    const confirmPrompt = itemCount > 1
+      ? `Delete entire sale transaction Bill #${billNo} (${itemCount} items) permanently across all devices?\n\nStock for all items will be restored.`
+      : `Delete sale record for Bill #${billNo} permanently across all devices?\n\nStock will be restored.`;
+
+    if (window.confirm(confirmPrompt)) {
+      setIsSyncing(true);
+      try {
+        const targetId = tx?.id || (typeof txOrId === 'string' ? txOrId : tx?.billNo || '');
+        const updated = await StorageService.deleteTransactionAsync(targetId);
+        setTransactions(updated);
+        setProducts(StorageService.getProducts());
+        showToast(`Bill #${billNo} deleted successfully across all devices`);
+      } catch (err) {
+        console.error('Failed to delete transaction:', err);
+        showToast(`Error deleting Bill #${billNo}`);
+      } finally {
+        setIsSyncing(false);
+      }
     }
   };
 
-  const filteredTransactions = transactions.filter(t => {
-    const matchesSearch = t.billNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (t.customerName && t.customerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                          (t.staffUsername && t.staffUsername.toLowerCase().includes(searchQuery.toLowerCase()));
-    const rawMode = (t.paymentMode || (t.splitDetails ? 'Split' : 'Cash')).toString().trim().toLowerCase();
-    const normalizedMode = rawMode === 'upi' ? 'UPI' : rawMode === 'split' ? 'Split' : rawMode === 'card' ? 'Card' : 'Cash';
-    const matchesPayment = paymentFilter === 'All' || normalizedMode === paymentFilter || t.paymentMode === paymentFilter;
-    return matchesSearch && matchesPayment;
-  });
+  const handleDeleteItem = async (tx: SaleTransaction, itemIdx: number) => {
+    const item = tx.items?.[itemIdx];
+    const prodName = item?.productName || 'product';
+
+    if (tx.items.length <= 1) {
+      return handleDeleteTransaction(tx);
+    }
+
+    if (window.confirm(`Delete product "${prodName}" from Bill #${tx.billNo} across all devices?\n\nThe bill total will be recalculated and stock will be restored.`)) {
+      setIsSyncing(true);
+      try {
+        const updated = await StorageService.deleteTransactionItem(tx.id || tx.billNo, itemIdx);
+        setTransactions(updated);
+        setProducts(StorageService.getProducts());
+        showToast(`"${prodName}" removed from Bill #${tx.billNo} across all devices`);
+      } catch (err) {
+        console.error('Failed to delete item from transaction:', err);
+        showToast(`Error removing "${prodName}"`);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
+
+  // Helper for matching calendar days
+  const isSameDay = (d1: Date, d2: Date) => {
+    return d1.getFullYear() === d2.getFullYear() &&
+           d1.getMonth() === d2.getMonth() &&
+           d1.getDate() === d2.getDate();
+  };
+
+  const isToday = (timestamp: string): boolean => {
+    if (!timestamp) return false;
+    const txDate = new Date(timestamp);
+    if (isNaN(txDate.getTime())) return false;
+    return isSameDay(txDate, new Date());
+  };
+
+  const isYesterday = (timestamp: string): boolean => {
+    if (!timestamp) return false;
+    const txDate = new Date(timestamp);
+    if (isNaN(txDate.getTime())) return false;
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    return isSameDay(txDate, yest);
+  };
+
+  const isThisMonth = (timestamp: string): boolean => {
+    if (!timestamp) return false;
+    const txDate = new Date(timestamp);
+    if (isNaN(txDate.getTime())) return false;
+    const now = new Date();
+    return txDate.getFullYear() === now.getFullYear() && txDate.getMonth() === now.getMonth();
+  };
+
+  const getItemFootwearType = (
+    tx: SaleTransaction,
+    item: any,
+    productsList: Product[]
+  ): string => {
+    if (item?.type) return item.type;
+    if (item?.customFields?.type) return item.customFields.type;
+    if (tx?.customFields?.['type']) return tx.customFields['type'];
+
+    let matchedProduct: Product | undefined =
+      productsList.find(p => p.id === item.productId) ||
+      productsList.find(p => p.code === item.productId) ||
+      (item.productId ? productsList.find(p => p.code && p.code.toLowerCase() === item.productId.toLowerCase()) : undefined) ||
+      productsList.find(p => item.productName && item.productName.toLowerCase() !== 'unknown' && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase());
+
+    if (!matchedProduct && (!item.productName || item.productName.toLowerCase() === 'unknown' || !item.productId)) {
+      const targetPrice = item.price > 0 ? item.price : (tx.subtotal || tx.finalAmount);
+      matchedProduct = productsList.find(p => Math.abs(p.price - targetPrice) < 0.01) ||
+                       productsList.find(p => Math.abs(p.price - targetPrice) < 0.5);
+    }
+
+    return deriveFootwearType(item, matchedProduct);
+  };
+
+  const todayBillsCount = React.useMemo(() => {
+    return transactions.filter(t => isToday(t.timestamp)).length;
+  }, [transactions]);
+
+  const footwearTypeCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    const dateFiltered = transactions.filter(t => {
+      if (dateFilter === 'today' && !isToday(t.timestamp)) return false;
+      if (dateFilter === 'yesterday' && !isYesterday(t.timestamp)) return false;
+      if (dateFilter === 'month' && !isThisMonth(t.timestamp)) return false;
+      return true;
+    });
+
+    dateFiltered.forEach(tx => {
+      const items = tx.items && tx.items.length > 0 ? tx.items : [{
+        id: '', productId: '', productName: 'Unknown', size: '', color: '',
+        price: tx.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+        discountedPrice: tx.finalAmount || 0, quantity: 1, totalPrice: tx.finalAmount || 0
+      }];
+
+      items.forEach(item => {
+        const type = getItemFootwearType(tx, item, products);
+        if (type) {
+          counts[type] = (counts[type] || 0) + (item.quantity || 1);
+        }
+      });
+    });
+
+    return counts;
+  }, [transactions, products, dateFilter]);
+
+  const availableFootwearTypes = React.useMemo(() => {
+    const typesSet = new Set<string>();
+
+    transactions.forEach(tx => {
+      const items = tx.items && tx.items.length > 0 ? tx.items : [{
+        id: '', productId: '', productName: 'Unknown', size: '', color: '',
+        price: tx.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+        discountedPrice: tx.finalAmount || 0, quantity: 1, totalPrice: tx.finalAmount || 0
+      }];
+      items.forEach(item => {
+        const t = getItemFootwearType(tx, item, products);
+        if (t) typesSet.add(t);
+      });
+    });
+
+    const defaults = ['Sandals', 'Shoes', 'Slippers', 'Flip Flops', 'Clogs'];
+    defaults.forEach(d => typesSet.add(d));
+
+    const sorted = Array.from(typesSet).sort((a, b) => {
+      const countA = footwearTypeCounts[a] || 0;
+      const countB = footwearTypeCounts[b] || 0;
+      if (countB !== countA) return countB - countA;
+      return a.localeCompare(b);
+    });
+
+    return ['All', ...sorted];
+  }, [transactions, products, footwearTypeCounts]);
+
+  interface ProcessedTransaction extends SaleTransaction {
+    displayItems: any[];
+  }
+
+  const filteredTransactions: ProcessedTransaction[] = React.useMemo(() => {
+    return transactions
+      .filter(t => {
+        // 1. Search Query
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const matchesBill = t.billNo.toLowerCase().includes(q);
+          const matchesCustomer = t.customerName ? t.customerName.toLowerCase().includes(q) : false;
+          const matchesPhone = t.customerPhone ? t.customerPhone.toLowerCase().includes(q) : false;
+          const matchesStaff = t.staffUsername ? t.staffUsername.toLowerCase().includes(q) : false;
+          const matchesItems = t.items ? t.items.some(i => (i.productName || '').toLowerCase().includes(q) || (i.productId || '').toLowerCase().includes(q)) : false;
+          if (!matchesBill && !matchesCustomer && !matchesPhone && !matchesStaff && !matchesItems) {
+            return false;
+          }
+        }
+
+        // 2. Payment Filter
+        if (paymentFilter !== 'All') {
+          const rawMode = (t.paymentMode || (t.splitDetails ? 'Split' : 'Cash')).toString().trim().toLowerCase();
+          const normalizedMode = rawMode === 'upi' ? 'UPI' : rawMode === 'split' ? 'Split' : rawMode === 'card' ? 'Card' : 'Cash';
+          if (normalizedMode !== paymentFilter && t.paymentMode !== paymentFilter) {
+            return false;
+          }
+        }
+
+        // 3. Date Filter
+        if (dateFilter === 'today' && !isToday(t.timestamp)) return false;
+        if (dateFilter === 'yesterday' && !isYesterday(t.timestamp)) return false;
+        if (dateFilter === 'month' && !isThisMonth(t.timestamp)) return false;
+
+        // 4. Footwear Type Filter
+        if (typeFilter !== 'All') {
+          const items = t.items && t.items.length > 0 ? t.items : [{
+            id: '', productId: '', productName: 'Unknown', size: '', color: '',
+            price: t.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+            discountedPrice: t.finalAmount || 0, quantity: 1, totalPrice: txSubtotalFallback(t)
+          }];
+          const hasMatchingType = items.some(item => {
+            const type = getItemFootwearType(t, item, products);
+            return type.toLowerCase() === typeFilter.toLowerCase();
+          });
+          if (!hasMatchingType) return false;
+        }
+
+        return true;
+      })
+      .map(t => {
+        const allItems = t.items && t.items.length > 0 ? t.items : [{
+          id: '', productId: '', productName: 'Unknown', size: '', color: '',
+          price: t.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
+          discountedPrice: t.finalAmount || 0, quantity: 1, totalPrice: txSubtotalFallback(t)
+        }];
+
+        const displayItems = typeFilter === 'All'
+          ? allItems
+          : allItems.filter(item => {
+              const type = getItemFootwearType(t, item, products);
+              return type.toLowerCase() === typeFilter.toLowerCase();
+            });
+
+        return {
+          ...t,
+          displayItems: displayItems.length > 0 ? displayItems : allItems
+        };
+      });
+  }, [transactions, searchQuery, paymentFilter, dateFilter, typeFilter, products]);
+
+  function txSubtotalFallback(tx: SaleTransaction): number {
+    return tx.finalAmount || 0;
+  }
 
   // Analytics Metrics
-  const totalRevenue = filteredTransactions.reduce((acc, t) => acc + t.finalAmount, 0); // Net Discounted Selling Total
-  const totalDiscount = filteredTransactions.reduce((acc, t) => acc + t.totalDiscount, 0);
-  const totalRetail = filteredTransactions.reduce((acc, t) => acc + (t.subtotal || t.items.reduce((s, i) => s + i.price * i.quantity, 0)), 0);
-  
-  // Calculate Wholesale Cost & Net Profit (Discounted Price - Wholesale Cost) (Admin only)
-  const totalWholesaleCost = filteredTransactions.reduce((acc, t) => {
-    const itemWholesale = t.items.reduce((sum, item) => sum + (item.wholesalePrice || 0) * item.quantity, 0);
-    return acc + itemWholesale;
-  }, 0);
+  const totalRevenue = React.useMemo(() => {
+    if (typeFilter === 'All') {
+      return filteredTransactions.reduce((acc, t) => acc + (t.finalAmount || 0), 0);
+    }
+    return filteredTransactions.reduce((acc, t) => {
+      return acc + t.displayItems.reduce((sum, item) => {
+        const soldVal = (item.discountedPrice !== undefined && item.discountedPrice !== null && !isNaN(Number(item.discountedPrice)))
+          ? Number(item.discountedPrice)
+          : (item.price > 0 ? item.price : 0);
+        return sum + (soldVal * (item.quantity || 1));
+      }, 0);
+    }, 0);
+  }, [filteredTransactions, typeFilter]);
+
+  const totalDiscount = React.useMemo(() => {
+    if (typeFilter === 'All') {
+      return filteredTransactions.reduce((acc, t) => acc + (t.totalDiscount || 0), 0);
+    }
+    return filteredTransactions.reduce((acc, t) => {
+      return acc + t.displayItems.reduce((sum, item) => {
+        const soldVal = (item.discountedPrice !== undefined && item.discountedPrice !== null && !isNaN(Number(item.discountedPrice)))
+          ? Number(item.discountedPrice)
+          : (item.price > 0 ? item.price : 0);
+        const mrp = item.price > 0 ? item.price : soldVal;
+        const diff = Math.max(0, mrp - soldVal);
+        return sum + (diff * (item.quantity || 1));
+      }, 0);
+    }, 0);
+  }, [filteredTransactions, typeFilter]);
+
+  const totalRetail = React.useMemo(() => {
+    if (typeFilter === 'All') {
+      return filteredTransactions.reduce((acc, t) => acc + (t.subtotal || (t.items || []).reduce((s, i) => s + i.price * i.quantity, 0)), 0);
+    }
+    return filteredTransactions.reduce((acc, t) => {
+      return acc + t.displayItems.reduce((sum, item) => sum + ((item.price > 0 ? item.price : 0) * (item.quantity || 1)), 0);
+    }, 0);
+  }, [filteredTransactions, typeFilter]);
+
+  const totalWholesaleCost = React.useMemo(() => {
+    return filteredTransactions.reduce((acc, t) => {
+      const items = typeFilter === 'All' ? (t.items || t.displayItems) : t.displayItems;
+      const itemWholesale = items.reduce((sum, item) => {
+        const matched = products.find(p => p.id === item.productId || p.code === item.productId);
+        const ws = Number(item.wholesalePrice) || Number(matched?.wholesalePrice) || 0;
+        return sum + (ws * (item.quantity || 1));
+      }, 0);
+      return acc + itemWholesale;
+    }, 0);
+  }, [filteredTransactions, typeFilter, products]);
 
   const netProfit = totalRevenue - totalWholesaleCost;
+
+  const totalPairsSold = React.useMemo(() => {
+    return filteredTransactions.reduce((acc, t) => {
+      return acc + t.displayItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
+    }, 0);
+  }, [filteredTransactions]);
+
+  const isAnyFilterActive = dateFilter !== 'all' || paymentFilter !== 'All' || typeFilter !== 'All' || searchQuery.trim() !== '';
+
+  const handleResetAllFilters = () => {
+    setDateFilter('all');
+    setPaymentFilter('All');
+    setTypeFilter('All');
+    setSearchQuery('');
+  };
 
   return (
     <div className="space-y-6">
       
       {/* Top Banner & Search */}
-      <div className="bg-white border border-[#E7E5EF] rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-[#1E1B4B] flex items-center space-x-2">
-            <History className="w-6 h-6 text-[#6D5DFB]" />
-            <span>Sales & Billing Ledger</span>
-            <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold flex items-center space-x-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Auto-Fill Active</span>
-            </span>
-          </h2>
-          <p className="text-xs text-[#64748B] mt-1">
-            Complete transaction logs, customer records, and receipt re-printing
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative">
-            <Search className="w-4 h-4 text-[#64748B] absolute left-3 top-3" />
-            <input
-              type="text"
-              placeholder="Search Bill # or customer..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-xl pl-9 pr-4 py-2.5 w-56 focus:outline-none focus:border-[#6D5DFB] font-medium transition"
-            />
+      <div className="bg-white border border-[#E7E5EF] rounded-2xl p-6 shadow-sm space-y-4">
+        {/* Header Row: Title & Action Buttons */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-[#1E1B4B] flex items-center space-x-2">
+              <History className="w-6 h-6 text-[#6D5DFB]" />
+              <span>Sales & Billing Ledger</span>
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Auto-Fill Active</span>
+              </span>
+            </h2>
+            <p className="text-xs text-[#64748B] mt-1">
+              Complete transaction logs, customer records, and receipt re-printing
+            </p>
           </div>
 
-          <div className="flex bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl p-1">
-            {(['All', 'Cash', 'UPI', 'Split'] as const).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setPaymentFilter(mode)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  paymentFilter === mode
-                    ? 'bg-[#6D5DFB] text-white shadow-sm'
-                    : 'text-[#64748B] hover:text-[#1E1B4B]'
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-
-          {/* Columns Customizer (Admin Only) */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Columns Customizer (Admin Only) */}
           {userRole === 'admin' && (
             <div className="relative">
               <button
@@ -546,7 +809,7 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
             <button
               onClick={() => {
                 ExportExcelService.exportCustomLedgerToExcel(
-                  filteredTransactions,
+                  filteredTransactions.map(tx => ({ ...tx, items: tx.displayItems })),
                   visibleColumns,
                   shopSettings?.shopName || 'UMA FOOTWEARS',
                   'sales_ledger',
@@ -576,66 +839,207 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
         </div>
       </div>
 
-      {/* Analytics Summary Cards */}
-      <div className={`grid grid-cols-1 ${userRole === 'admin' ? 'sm:grid-cols-2 lg:grid-cols-4' : 'max-w-xs'} gap-4`}>
-        
-        <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Total Bills</span>
-            <div className="p-2 bg-[#EEEBFF] text-[#6D5DFB] rounded-xl">
-              <ShoppingBag className="w-4 h-4" />
+      {/* Filter Row 1: Search + Date Filter Pills + Payment Mode Pills */}
+      <div className="pt-3 border-t border-[#E7E5EF]/80 flex flex-wrap items-center justify-between gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-xs">
+          <Search className="w-4 h-4 text-[#64748B] absolute left-3 top-3" />
+          <input
+            type="text"
+            placeholder="Search Bill #, customer, staff..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] placeholder-[#94A3B8] text-xs rounded-xl pl-9 pr-8 py-2.5 focus:outline-none focus:border-[#6D5DFB] font-medium transition"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-2.5 text-[#94A3B8] hover:text-[#1E1B4B] p-0.5 rounded-md"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Date Filter Pills */}
+          <div className="flex items-center space-x-1.5">
+            <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider flex items-center space-x-1">
+              <Calendar className="w-3.5 h-3.5 text-[#6D5DFB]" />
+              <span>Date:</span>
+            </span>
+            <div className="flex bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl p-1">
+              {[
+                { key: 'all', label: 'All Time' },
+                { key: 'today', label: 'Today', count: todayBillsCount },
+                { key: 'yesterday', label: 'Yesterday' },
+                { key: 'month', label: 'This Month' }
+              ].map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setDateFilter(tab.key as any)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 ${
+                    dateFilter === tab.key
+                      ? 'bg-[#6D5DFB] text-white shadow-sm'
+                      : 'text-[#64748B] hover:text-[#1E1B4B]'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  {tab.key === 'today' && tab.count !== undefined && tab.count > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                      dateFilter === 'today' ? 'bg-white/25 text-white' : 'bg-[#6D5DFB]/15 text-[#6D5DFB]'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
           </div>
-          <div className="text-2xl font-extrabold text-[#1E1B4B] font-mono mt-2">
-            {filteredTransactions.length}
+
+          {/* Payment Mode Pills */}
+          <div className="flex items-center space-x-1.5">
+            <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider flex items-center space-x-1">
+              <Banknote className="w-3.5 h-3.5 text-[#22C55E]" />
+              <span>Pay:</span>
+            </span>
+            <div className="flex bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl p-1">
+              {(['All', 'Cash', 'UPI', 'Split'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setPaymentFilter(mode)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                    paymentFilter === mode
+                      ? 'bg-[#6D5DFB] text-white shadow-sm'
+                      : 'text-[#64748B] hover:text-[#1E1B4B]'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Row 2: Footwear Type Pills Filter */}
+      <div className="pt-3 border-t border-[#E7E5EF]/60 flex items-center justify-between gap-2 overflow-x-auto">
+        <div className="flex items-center space-x-2 min-w-0">
+          <div className="flex items-center space-x-1.5 flex-shrink-0 text-[11px] font-bold text-[#64748B] uppercase tracking-wider pr-1">
+            <Tag className="w-3.5 h-3.5 text-[#6D5DFB]" />
+            <span>Footwear:</span>
+          </div>
+          <div className="flex bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl p-1 flex-wrap gap-1">
+            {availableFootwearTypes.map(ft => {
+              const count = ft === 'All' ? undefined : (footwearTypeCounts[ft] || 0);
+              return (
+                <button
+                  key={ft}
+                  onClick={() => setTypeFilter(ft)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap flex items-center space-x-1.5 ${
+                    typeFilter === ft
+                      ? 'bg-[#6D5DFB] text-white shadow-sm'
+                      : 'text-[#64748B] hover:text-[#1E1B4B]'
+                  }`}
+                >
+                  <span>{ft === 'All' ? 'All Types' : ft}</span>
+                  {count !== undefined && count > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                      typeFilter === ft ? 'bg-white/25 text-white' : 'bg-[#6D5DFB]/15 text-[#6D5DFB]'
+                    }`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {userRole === 'admin' && (
-          <>
-            <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Total Revenue</span>
-                <div className="p-2 bg-emerald-50 text-[#22C55E] rounded-xl">
-                  <DollarSign className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="text-2xl font-extrabold text-[#22C55E] font-mono mt-2">
-                ₹{totalRevenue.toFixed(2)}
-              </div>
-            </div>
-
-            <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Discounts Given</span>
-                <div className="p-2 bg-amber-50 text-[#F59E0B] rounded-xl">
-                  <TrendingUp className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="text-2xl font-extrabold text-[#F59E0B] font-mono mt-2">
-                ₹{totalDiscount.toFixed(2)}
-              </div>
-            </div>
-
-            {/* ADMIN ONLY METRIC: Net Profit based on Wholesale Price */}
-            <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 border border-amber-200 rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-amber-900 uppercase tracking-wider">Net Profit (Admin)</span>
-                <span className="text-[10px] bg-amber-200/60 text-amber-900 px-2 py-0.5 rounded font-mono font-extrabold">
-                  ADMIN ONLY
-                </span>
-              </div>
-              <div className="text-2xl font-extrabold text-amber-900 font-mono mt-2">
-                ₹{netProfit.toFixed(2)}
-              </div>
-              <div className="text-[10px] text-amber-700 mt-1 font-semibold">
-                Discounted ₹{totalRevenue.toFixed(2)} - Wholesale ₹{totalWholesaleCost.toFixed(2)}
-              </div>
-            </div>
-          </>
+        {/* Reset All Filters button if any active */}
+        {isAnyFilterActive && (
+          <button
+            onClick={handleResetAllFilters}
+            className="flex items-center space-x-1 text-xs text-[#EF4444] hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-xl transition flex-shrink-0 font-semibold shadow-xs"
+            title="Reset all filters back to default"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset Filters</span>
+          </button>
         )}
-
       </div>
+    </div>
+
+    {/* Analytics Summary Cards */}
+    <div className={`grid grid-cols-1 ${userRole === 'admin' ? 'sm:grid-cols-2 lg:grid-cols-4' : 'max-w-xs'} gap-4`}>
+      
+      <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Total Bills</span>
+          <div className="p-2 bg-[#EEEBFF] text-[#6D5DFB] rounded-xl">
+            <ShoppingBag className="w-4 h-4" />
+          </div>
+        </div>
+        <div className="text-2xl font-extrabold text-[#1E1B4B] font-mono mt-2">
+          {filteredTransactions.length}
+        </div>
+        <div className="text-[11px] text-[#64748B] mt-1 font-semibold">
+          {totalPairsSold} {totalPairsSold === 1 ? 'pair' : 'pairs'} sold
+        </div>
+      </div>
+
+      {userRole === 'admin' && (
+        <>
+          <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">
+                {typeFilter !== 'All' ? `${typeFilter} Revenue` : (dateFilter === 'today' ? "Today's Revenue" : 'Total Revenue')}
+              </span>
+              <div className="p-2 bg-emerald-50 text-[#22C55E] rounded-xl">
+                <DollarSign className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-extrabold text-[#22C55E] font-mono mt-2">
+              ₹{totalRevenue.toFixed(2)}
+            </div>
+            <div className="text-[11px] text-[#64748B] mt-1 font-medium">
+              {dateFilter === 'today' ? 'Active sales for today' : typeFilter !== 'All' ? `Filtered by ${typeFilter}` : 'Net selling total'}
+            </div>
+          </div>
+
+          <div className="bg-white border border-[#E7E5EF] rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Discounts Given</span>
+              <div className="p-2 bg-amber-50 text-[#F59E0B] rounded-xl">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-extrabold text-[#F59E0B] font-mono mt-2">
+              ₹{totalDiscount.toFixed(2)}
+            </div>
+            <div className="text-[11px] text-[#64748B] mt-1 font-medium">
+              Customer savings
+            </div>
+          </div>
+
+          {/* ADMIN ONLY METRIC: Net Profit based on Wholesale Price */}
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 border border-amber-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-amber-900 uppercase tracking-wider">Net Profit (Admin)</span>
+              <span className="text-[10px] bg-amber-200/60 text-amber-900 px-2 py-0.5 rounded font-mono font-extrabold">
+                ADMIN ONLY
+              </span>
+            </div>
+            <div className="text-2xl font-extrabold text-amber-900 font-mono mt-2">
+              ₹{netProfit.toFixed(2)}
+            </div>
+            <div className="text-[10px] text-amber-700 mt-1 font-semibold">
+              Discounted ₹{totalRevenue.toFixed(2)} - Wholesale ₹{totalWholesaleCost.toFixed(2)}
+            </div>
+          </div>
+        </>
+      )}
+
+    </div>
 
       {/* Transactions List */}
       <div className="bg-white border border-[#E7E5EF] rounded-2xl overflow-hidden shadow-sm">
@@ -666,18 +1070,22 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
               {filteredTransactions.length === 0 ? (
                 <tr>
                   <td colSpan={effectiveVisibleColumns.length + 1} className="py-12 text-center text-[#64748B]">
-                    No sales transactions recorded yet.
+                    {dateFilter === 'today'
+                      ? "No sales transactions recorded for Today yet."
+                      : typeFilter !== 'All'
+                      ? `No sales transactions found for footwear type "${typeFilter}".`
+                      : "No sales transactions recorded yet."}
                   </td>
                 </tr>
               ) : (
                 filteredTransactions.map((tx) => {
                   const txDate = new Date(tx.timestamp);
                   const formattedDateTime = !isNaN(txDate.getTime()) ? txDate.toLocaleString('en-IN') : tx.timestamp;
-                  const items = tx.items && tx.items.length > 0 ? tx.items : [{
+                  const items = tx.displayItems && tx.displayItems.length > 0 ? tx.displayItems : (tx.items && tx.items.length > 0 ? tx.items : [{
                     id: '', productId: '', productName: 'Unknown', size: '', color: '',
                     price: tx.subtotal || 0, wholesalePrice: 0, discountPercent: 0,
                     discountedPrice: tx.finalAmount || 0, quantity: 1, totalPrice: tx.finalAmount || 0
-                  }];
+                  }]);
 
                   return items.map((item, itemIdx) => {
                     const isFirstItem = itemIdx === 0;
@@ -851,7 +1259,18 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                             case 'articleNo':
                               return (
                                 <td key={colId} className="py-2.5 px-4 whitespace-nowrap">
-                                  <span className="text-xs font-bold text-[#1E1B4B]">{derivedArticle || pName}</span>
+                                  <div className="flex items-center justify-between space-x-2">
+                                    <span className="text-xs font-bold text-[#1E1B4B]">{derivedArticle || pName}</span>
+                                    {userRole === 'admin' && items.length > 1 && (
+                                      <button
+                                        onClick={() => handleDeleteItem(tx, itemIdx)}
+                                        className="p-1 text-[#94A3B8] hover:text-[#EF4444] hover:bg-red-50 rounded transition"
+                                        title={`Delete product "${derivedArticle || pName}" from Bill #${tx.billNo} (restores stock)`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               );
 
@@ -958,10 +1377,21 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
                             case 'itemsBilled':
                               return (
                                 <td key={colId} className="py-3 px-4 max-w-xs">
-                                  <div className="text-[#1E1B4B] font-medium">
-                                    {item.productName}
-                                    {item.quantity > 1 && (
-                                      <span className="ml-1 text-[#6D5DFB] font-bold">×{item.quantity}</span>
+                                  <div className="flex items-center justify-between space-x-2">
+                                    <div className="text-[#1E1B4B] font-medium">
+                                      {item.productName}
+                                      {item.quantity > 1 && (
+                                        <span className="ml-1 text-[#6D5DFB] font-bold">×{item.quantity}</span>
+                                      )}
+                                    </div>
+                                    {userRole === 'admin' && items.length > 1 && (
+                                      <button
+                                        onClick={() => handleDeleteItem(tx, itemIdx)}
+                                        className="p-1 text-[#94A3B8] hover:text-[#EF4444] hover:bg-red-50 rounded transition"
+                                        title={`Delete product "${item.productName}" from Bill #${tx.billNo} (restores stock)`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     )}
                                   </div>
                                 </td>
@@ -1075,9 +1505,9 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
 
                               {userRole === 'admin' && (
                                 <button
-                                  onClick={() => handleDeleteTransaction(tx.id)}
+                                  onClick={() => handleDeleteTransaction(tx)}
                                   className="p-1.5 text-[#64748B] hover:text-[#EF4444] hover:bg-red-50 rounded-lg transition"
-                                  title="Delete Transaction"
+                                  title={items.length > 1 ? `Delete entire Bill #${tx.billNo} (${items.length} items)` : `Delete Bill #${tx.billNo}`}
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -1102,6 +1532,17 @@ export const SalesHistory: React.FC<SalesHistoryProps> = ({ onPrintBill }) => {
         transactions={transactions}
         visibleColumnIds={visibleColumns}
       />
+
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#1E1B4B] text-white px-4 py-3 rounded-xl shadow-xl border border-[#312E81] flex items-center space-x-2.5 text-xs font-semibold animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+          <button onClick={() => setToastMessage(null)} className="ml-2 text-gray-400 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
     </div>
   );

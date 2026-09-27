@@ -329,6 +329,334 @@ export const PrintService = {
   },
 
   /**
+   * Generates clean 50mm (2-inch) mini POS thermal receipt HTML
+   * Optimized specifically for 50mm / 58mm portable Bluetooth and desktop thermal printers
+   */
+  generateThermal50Html(transaction: SaleTransaction, settings: ShopSettings): string {
+    const formattedDate = new Date(transaction.timestamp).toLocaleString('en-IN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    const totalQty = transaction.items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
+    const hasSplit = transaction.paymentMode === 'Split' && transaction.splitDetails;
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Receipt #${transaction.billNo}</title>
+  <style>
+    @page {
+      size: 50mm auto;
+      margin: 1mm 1.5mm;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace;
+      font-size: 9px;
+      line-height: 1.25;
+      color: #000;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .thermal-receipt {
+      width: 47mm;
+      max-width: 47mm;
+      margin: 0 auto;
+      padding: 1mm 0;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 4px;
+      padding-bottom: 4px;
+      border-bottom: 1px dashed #000;
+    }
+    .shop-name {
+      font-size: 13px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      line-height: 1.15;
+    }
+    .tagline {
+      font-size: 7.5px;
+      font-style: italic;
+      color: #333;
+      margin: 1px 0;
+    }
+    .address {
+      font-size: 7.5px;
+      color: #222;
+      margin: 1px 0;
+      line-height: 1.15;
+    }
+    .phone, .gstin {
+      font-size: 7.5px;
+      font-weight: 600;
+    }
+    .meta-box {
+      margin: 3px 0;
+      padding-bottom: 3px;
+      border-bottom: 1px dashed #000;
+      font-size: 8px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 1px;
+    }
+    .customer-box {
+      margin: 2px 0;
+      padding: 2px 3px;
+      background-color: #f7f7f7;
+      border: 1px solid #ccc;
+      border-radius: 2px;
+      font-size: 7.5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 3px 0;
+      font-size: 8px;
+    }
+    th {
+      border-bottom: 1.5px solid #000;
+      padding: 2.5px 0.5px;
+      text-align: left;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 7.5px;
+    }
+    td {
+      padding: 2px 0.5px;
+      vertical-align: top;
+      border-bottom: 1px dashed #e0e0e0;
+    }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .item-name {
+      font-weight: 700;
+      color: #000;
+      font-size: 8.5px;
+      word-break: break-word;
+      line-height: 1.15;
+    }
+    .item-sub {
+      font-size: 7px;
+      color: #444;
+      line-height: 1.1;
+    }
+    .summary-box {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1.5px solid #000;
+      font-size: 8px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 1.5px;
+    }
+    .summary-row.savings {
+      color: #047857;
+      font-weight: 600;
+    }
+    .net-total {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 900;
+      margin-top: 3px;
+      padding-top: 2.5px;
+      border-top: 1.5px dashed #000;
+      border-bottom: 1.5px dashed #000;
+      padding-bottom: 2.5px;
+    }
+    .payment-row {
+      margin-top: 3px;
+      padding-top: 2.5px;
+      border-top: 1px solid #ddd;
+      font-size: 8px;
+      font-weight: 600;
+    }
+    .split-detail {
+      font-size: 7.5px;
+      color: #444;
+      text-align: right;
+      margin-top: 1px;
+    }
+    .qr-box {
+      text-align: center;
+      margin: 4px 0;
+      padding: 4px 2px;
+      border: 1px dashed #000;
+      border-radius: 3px;
+      background: #fff;
+    }
+    .qr-title {
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .qr-img {
+      width: 25mm;
+      height: 25mm;
+      margin: 0 auto 2px auto;
+      display: block;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
+    }
+    .qr-upi {
+      font-size: 7.5px;
+      font-weight: 700;
+      font-family: monospace;
+      margin-bottom: 1px;
+    }
+    .qr-sub {
+      font-size: 7px;
+      color: #222;
+    }
+    .qr-apps {
+      font-size: 6.5px;
+      font-weight: 600;
+      color: #444;
+      margin-top: 1px;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 5px;
+      padding-top: 3px;
+      border-top: 1px dashed #000;
+      font-size: 7px;
+      color: #333;
+      line-height: 1.15;
+    }
+    .footer-highlight {
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-top: 2px;
+      letter-spacing: 0.2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="thermal-receipt">
+    <!-- Shop Header -->
+    <div class="header">
+      <div class="shop-name">${settings.shopName || 'UMA FOOTWEARS'}</div>
+      <div class="tagline">"${settings.tagline || 'where every steps matters'}"</div>
+      <div class="address">${settings.address || 'Commercial Market Complex, Main Road, Chennai'}</div>
+      <div class="phone">Ph: ${settings.phone || '+91 98765 43210'}</div>
+      ${settings.gstin ? `<div class="gstin">GSTIN: ${settings.gstin}</div>` : ''}
+    </div>
+
+    <!-- Metadata -->
+    <div class="meta-box">
+      <div class="meta-row">
+        <div><strong>Bill:</strong> #${transaction.billNo}</div>
+        <div><strong>Date:</strong> ${formattedDate}</div>
+      </div>
+      <div class="meta-row">
+        <div><strong>Mode:</strong> ${transaction.paymentMode || 'Cash'}</div>
+        <div><strong>By:</strong> ${transaction.staffUsername || 'staff'}</div>
+      </div>
+      ${(transaction.customerName || transaction.customerPhone) ? `
+      <div class="customer-box">
+        <strong>Cust:</strong> ${transaction.customerName || 'Walk-in'} ${transaction.customerPhone ? `(${transaction.customerPhone})` : ''}
+      </div>` : ''}
+    </div>
+
+    <!-- Line Items Table -->
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 48%;">Item</th>
+          <th class="text-center" style="width: 14%;">Qty</th>
+          <th class="text-right" style="width: 18%;">Rate</th>
+          <th class="text-right" style="width: 20%;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${transaction.items.map((item) => `
+        <tr>
+          <td>
+            <div class="item-name">${item.productName || 'Footwear'}</div>
+            <div class="item-sub">
+              ${item.size ? `Sz:${item.size}` : ''}${item.brand ? ` ${item.brand}` : ''}${item.discountPercent > 0 ? ` (-${item.discountPercent}%)` : ''}
+            </div>
+          </td>
+          <td class="text-center" style="font-weight: 600;">${item.quantity}</td>
+          <td class="text-right">₹${Number(item.discountedPrice).toFixed(0)}</td>
+          <td class="text-right" style="font-weight: 700;">₹${Number(item.totalPrice).toFixed(2)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+
+    <!-- Totals & Payment Summary -->
+    <div class="summary-box">
+      <div class="summary-row">
+        <span>Total Qty:</span>
+        <span>${totalQty} pcs</span>
+      </div>
+      <div class="summary-row">
+        <span>Subtotal (MRP):</span>
+        <span>₹${transaction.subtotal.toFixed(2)}</span>
+      </div>
+      ${transaction.totalDiscount > 0 ? `
+      <div class="summary-row savings">
+        <span>Discount:</span>
+        <span>- ₹${transaction.totalDiscount.toFixed(2)}</span>
+      </div>` : ''}
+      
+      <div class="net-total">
+        <span>NET TOTAL:</span>
+        <span>₹${transaction.finalAmount.toFixed(2)}</span>
+      </div>
+
+      <div class="payment-row">
+        <div class="summary-row">
+          <span>Mode:</span>
+          <span>${transaction.paymentMode || 'Cash'}</span>
+        </div>
+        ${hasSplit ? `
+        <div class="split-detail">
+          Cash: ₹${Number(transaction.splitDetails?.cash || 0).toFixed(0)} | UPI: ₹${Number(transaction.splitDetails?.upi || 0).toFixed(0)}
+        </div>` : ''}
+      </div>
+    </div>
+
+    <!-- UPI Scan & Pay QR Code -->
+    <div class="qr-box">
+      <div class="qr-title">SCAN &amp; PAY VIA UPI</div>
+      <img class="qr-img" src="${PAYMENT_QR_CODE_ONLY}" alt="UPI QR Code" />
+      <div class="qr-upi">${PAYMENT_UPI_ID}</div>
+      <div class="qr-sub">${PAYMENT_UPI_PAYEE}</div>
+      <div class="qr-apps">GPay • PhonePe • Paytm • Any UPI</div>
+    </div>
+
+    <!-- Store Footer Notice -->
+    <div class="footer">
+      <div>${settings.footerMessage || 'Thank you! Goods once sold can be exchanged within 7 days.'}</div>
+      <div class="footer-highlight">*** THANK YOU ***</div>
+    </div>
+  </div>
+</body>
+</html>`;
+  },
+
+  /**
    * Generates clean standard A4 invoice HTML
    */
   generateA4Html(transaction: SaleTransaction, settings: ShopSettings): string {
@@ -748,17 +1076,21 @@ export const PrintService = {
   /**
    * Router for generating receipt HTML
    */
-  generateReceiptHtml(transaction: SaleTransaction, settings: ShopSettings, format: 'thermal' | 'a4' = 'thermal'): string {
-    return format === 'a4'
-      ? this.generateA4Html(transaction, settings)
-      : this.generateThermalHtml(transaction, settings);
+  generateReceiptHtml(transaction: SaleTransaction, settings: ShopSettings, format: 'thermal' | 'thermal-50' | 'a4' = 'thermal'): string {
+    if (format === 'a4') {
+      return this.generateA4Html(transaction, settings);
+    }
+    if (format === 'thermal-50') {
+      return this.generateThermal50Html(transaction, settings);
+    }
+    return this.generateThermalHtml(transaction, settings);
   },
 
   /**
    * Direct, bulletproof printing using a hidden iframe
    * Bypasses all modal, overflow, backdrop, and CSS layout clipping
    */
-  printReceipt(transaction: SaleTransaction, settings: ShopSettings, format: 'thermal' | 'a4' = 'thermal'): void {
+  printReceipt(transaction: SaleTransaction, settings: ShopSettings, format: 'thermal' | 'thermal-50' | 'a4' = 'thermal'): void {
     try {
       const html = this.generateReceiptHtml(transaction, settings, format);
 
@@ -774,7 +1106,7 @@ export const PrintService = {
       iframe.style.position = 'fixed';
       iframe.style.top = '-10000px';
       iframe.style.left = '-10000px';
-      iframe.style.width = format === 'a4' ? '210mm' : '80mm';
+      iframe.style.width = format === 'a4' ? '210mm' : (format === 'thermal-50' ? '50mm' : '80mm');
       iframe.style.height = '1000px';
       iframe.style.border = 'none';
 

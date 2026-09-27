@@ -12,13 +12,13 @@ interface PrintBillModalProps {
 
 export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onClose }) => {
   const { shopSettings } = useAuth();
-  const [format, setFormat] = useState<'thermal' | 'a4' | 'upi-qr'>('thermal');
+  const [format, setFormat] = useState<'thermal' | 'thermal-50' | 'a4' | 'upi-qr'>('thermal');
   const [isPrinting, setIsPrinting] = useState(false);
   const [copiedUpi, setCopiedUpi] = useState(false);
 
   if (!transaction) return null;
 
-  const handlePrint = (selectedFormat: 'thermal' | 'a4' = format === 'a4' ? 'a4' : 'thermal') => {
+  const handlePrint = (selectedFormat: 'thermal' | 'thermal-50' | 'a4' = (format === 'a4' ? 'a4' : (format === 'thermal-50' ? 'thermal-50' : 'thermal'))) => {
     setIsPrinting(true);
     PrintService.printReceipt(transaction, shopSettings, selectedFormat);
     setTimeout(() => setIsPrinting(false), 1500);
@@ -74,7 +74,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               <button
                 type="button"
                 onClick={() => setFormat('thermal')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-md transition ${
+                className={`flex items-center space-x-1 px-2 py-1 rounded-md transition ${
                   format === 'thermal'
                     ? 'bg-white text-[#6D5DFB] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1E1B4B]'
@@ -82,12 +82,25 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 title="80mm Thermal Receipt Paper (POS Printers)"
               >
                 <Receipt className="w-3.5 h-3.5" />
-                <span>Thermal</span>
+                <span>80mm</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormat('thermal-50')}
+                className={`flex items-center space-x-1 px-2 py-1 rounded-md transition ${
+                  format === 'thermal-50'
+                    ? 'bg-white text-[#6D5DFB] shadow-xs'
+                    : 'text-[#64748B] hover:text-[#1E1B4B]'
+                }`}
+                title="50mm Mini Portable / Bluetooth Thermal Receipt"
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>50mm</span>
               </button>
               <button
                 type="button"
                 onClick={() => setFormat('a4')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-md transition ${
+                className={`flex items-center space-x-1 px-2 py-1 rounded-md transition ${
                   format === 'a4'
                     ? 'bg-white text-[#6D5DFB] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1E1B4B]'
@@ -100,7 +113,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               <button
                 type="button"
                 onClick={() => setFormat('upi-qr')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-md transition ${
+                className={`flex items-center space-x-1 px-2 py-1 rounded-md transition ${
                   format === 'upi-qr'
                     ? 'bg-white text-[#6D5DFB] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1E1B4B]'
@@ -262,6 +275,149 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               <div className="text-center text-[9px] text-gray-500 pt-3 border-t border-dashed border-gray-300 leading-tight">
                 <p>{shopSettings.footerMessage || 'Thank you for shopping with us! Goods once sold can be exchanged within 7 days with valid receipt.'}</p>
                 <p className="font-bold uppercase tracking-wider text-gray-700 mt-1">*** HAVE A WONDERFUL DAY ***</p>
+                <p className="text-[8px] text-gray-400 font-mono mt-1">80mm Standard Thermal</p>
+              </div>
+            </div>
+          ) : format === 'thermal-50' ? (
+            /* THERMAL 50MM PREVIEW */
+            <div
+              id="print-bill-root"
+              className="format-50mm bg-white text-black p-3 rounded-lg shadow-md font-sans text-[10px] space-y-2.5 max-w-[240px] mx-auto border border-gray-200"
+            >
+              {/* Receipt Header */}
+              <div className="text-center space-y-0.5 pb-2 border-b border-dashed border-gray-400">
+                <div className="flex items-center justify-center space-x-1 text-xs font-black text-slate-900 uppercase tracking-tight">
+                  <Footprints className="w-3.5 h-3.5 inline text-[#6D5DFB]" />
+                  <span>{shopSettings.shopName || 'UMA FOOTWEARS'}</span>
+                </div>
+                <p className="text-[8.5px] font-semibold text-gray-700 italic tracking-wide">
+                  "{shopSettings.tagline || 'where every steps matters'}"
+                </p>
+                <p className="text-[8px] text-gray-600 line-clamp-2 leading-tight">
+                  {shopSettings.address || 'Commercial Market Complex, Main Road, Chennai'}
+                </p>
+                <div className="text-[8px] text-gray-800 font-medium">
+                  Ph: {shopSettings.phone || '+91 98765 43210'}
+                </div>
+                {shopSettings.gstin && (
+                  <div className="text-[8px] font-bold text-gray-800">
+                    GSTIN: {shopSettings.gstin}
+                  </div>
+                )}
+              </div>
+
+              {/* Bill Details */}
+              <div className="text-[8.5px] space-y-0.5 border-b border-dashed border-gray-400 pb-2">
+                <div className="flex justify-between">
+                  <span className="font-bold">Bill:</span>
+                  <span className="font-mono font-bold">#{transaction.billNo}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Date:</span>
+                  <span>{formattedDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Mode:</span>
+                  <span className="font-bold uppercase text-[#6D5DFB]">{transaction.paymentMode || 'Cash'}</span>
+                </div>
+                {(transaction.customerName || transaction.customerPhone) && (
+                  <div className="pt-0.5 mt-0.5 border-t border-gray-100 flex justify-between">
+                    <span className="text-gray-600">Cust:</span>
+                    <span className="font-bold truncate max-w-[130px] text-right">
+                      {transaction.customerName || 'Walk-in'} {transaction.customerPhone ? `(${transaction.customerPhone})` : ''}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Line Items */}
+              <div className="space-y-1.5 border-b border-dashed border-gray-400 pb-2">
+                <div className="grid grid-cols-12 text-[8px] font-bold uppercase text-gray-500 pb-0.5 border-b border-gray-200">
+                  <div className="col-span-6">Item</div>
+                  <div className="col-span-2 text-center">Qty</div>
+                  <div className="col-span-4 text-right">Price</div>
+                </div>
+
+                {transaction.items.map((item, idx) => (
+                  <div key={idx} className="grid grid-cols-12 text-[8.5px] items-start border-b border-dotted border-gray-100 pb-1">
+                    <div className="col-span-6 leading-tight">
+                      <div className="font-bold text-gray-900 truncate">{item.productName}</div>
+                      <div className="text-[7.5px] text-gray-500">
+                        {item.size ? `Sz: ${item.size}` : ''}
+                        {item.discountPercent > 0 ? ` (-${item.discountPercent}%)` : ''}
+                      </div>
+                    </div>
+                    <div className="col-span-2 text-center font-bold text-gray-700">
+                      ×{item.quantity}
+                    </div>
+                    <div className="col-span-4 text-right font-mono font-bold text-gray-900">
+                      ₹{Number(item.totalPrice).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Financial Totals */}
+              <div className="text-[8.5px] space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Total Qty:</span>
+                  <span className="font-semibold">{totalQty} pcs</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Subtotal:</span>
+                  <span className="font-mono">₹{transaction.subtotal.toFixed(2)}</span>
+                </div>
+
+                {transaction.totalDiscount > 0 && (
+                  <div className="flex justify-between text-emerald-700 font-semibold">
+                    <span>Discount:</span>
+                    <span className="font-mono">-₹{transaction.totalDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between text-[11px] font-black border-y border-dashed border-gray-900 py-1 mt-0.5">
+                  <span>NET TOTAL:</span>
+                  <span className="font-mono text-xs text-[#6D5DFB]">₹{transaction.finalAmount.toFixed(2)}</span>
+                </div>
+
+                {isSplit && (
+                  <div className="text-[7.5px] text-gray-600 bg-amber-50 p-1.5 rounded border border-amber-200">
+                    <div className="font-bold text-amber-800">Split Details:</div>
+                    <div className="flex justify-between mt-0.5">
+                      <span>Cash:</span>
+                      <span className="font-mono font-semibold">₹{Number(transaction.splitDetails?.cash || 0).toFixed(0)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>UPI:</span>
+                      <span className="font-mono font-semibold">₹{Number(transaction.splitDetails?.upi || 0).toFixed(0)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* UPI QR Payment Box */}
+              <div className="border border-dashed border-gray-400 rounded-lg p-2 my-1 text-center bg-gray-50 flex flex-col items-center">
+                <div className="text-[8px] font-bold text-gray-800 uppercase tracking-wider mb-0.5">
+                  Scan &amp; Pay via UPI
+                </div>
+                <img
+                  src={PAYMENT_QR_CODE_ONLY}
+                  alt="UPI QR Code"
+                  className="w-20 h-20 object-contain bg-white p-1 rounded border border-gray-300"
+                />
+                <div className="text-[8px] font-mono font-bold text-gray-900 mt-0.5">
+                  {PAYMENT_UPI_ID}
+                </div>
+                <div className="text-[7.5px] text-gray-600 font-medium">
+                  {PAYMENT_UPI_PAYEE}
+                </div>
+              </div>
+
+              {/* Footer Notice */}
+              <div className="text-center text-[7.5px] text-gray-500 pt-1.5 border-t border-dashed border-gray-300 leading-tight">
+                <p>{shopSettings.footerMessage || 'Thank you! Goods once sold can be exchanged within 7 days.'}</p>
+                <p className="font-bold uppercase tracking-wider text-gray-700 mt-0.5">*** THANK YOU ***</p>
+                <p className="text-[7px] text-gray-400 font-mono">50mm Mini Thermal</p>
               </div>
             </div>
           ) : format === 'upi-qr' ? (
@@ -448,7 +604,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
           </button>
           
           <button
-            onClick={() => handlePrint(format === 'a4' ? 'a4' : 'thermal')}
+            onClick={() => handlePrint(format === 'a4' ? 'a4' : (format === 'thermal-50' ? 'thermal-50' : 'thermal'))}
             disabled={isPrinting}
             className="w-2/3 py-2.5 px-4 bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg flex items-center justify-center space-x-2 transition disabled:opacity-50"
           >
@@ -458,7 +614,11 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 ? 'Opening Printer...'
                 : format === 'upi-qr'
                 ? 'Print Receipt (with QR)'
-                : `Print Bill (${format === 'thermal' ? '80mm Thermal' : 'Standard A4'})`}
+                : format === 'thermal-50'
+                ? 'Print Bill (50mm Thermal)'
+                : format === 'thermal'
+                ? 'Print Bill (80mm Thermal)'
+                : 'Print Bill (Standard A4)'}
             </span>
           </button>
         </div>

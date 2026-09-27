@@ -11,6 +11,8 @@ const STORAGE_KEYS = {
   LEDGER_COLUMNS: 'uma_footwears_ledger_columns',
   CUSTOM_COLUMNS: 'uma_footwears_custom_columns',
   COLUMN_LABELS: 'uma_footwears_column_labels',
+  PENDING_BILLS: 'uma_footwears_pending_bills',
+  DELETED_BILLS: 'uma_footwears_deleted_bills',
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1187,15 +1189,28 @@ export const StorageService = {
         };
       });
 
-      // Merge cloud transactions with any unsynced local transactions
-      const cloudBillNos = new Set(transactions.map(t => t.billNo));
-      const unsyncedLocal = local.filter(t => !cloudBillNos.has(t.billNo));
-      const mergedTransactions = [...transactions, ...unsyncedLocal];
+      // Filter out any locally marked deleted bills from cloud response
+      const deletedBills = new Set(this.getDeletedBillNos());
+      const activeCloudTransactions = transactions.filter(t => !deletedBills.has(t.billNo) && !deletedBills.has(t.id));
+
+      const cloudBillNos = new Set(activeCloudTransactions.map(t => t.billNo));
+
+      // ONLY keep local transactions that are genuinely pending sync (created offline on this device)
+      // and not marked as deleted
+      const pendingBills = new Set(this.getPendingSyncBills());
+      const unsyncedLocal = local.filter(t =>
+        !cloudBillNos.has(t.billNo) &&
+        pendingBills.has(t.billNo) &&
+        !deletedBills.has(t.billNo) &&
+        !deletedBills.has(t.id)
+      );
+
+      const mergedTransactions = [...activeCloudTransactions, ...unsyncedLocal];
 
       localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(mergedTransactions));
       this.emitDataChange();
 
-      // Automatically push any unsynced local transactions to cloud so other devices get them immediately
+      // Automatically push any genuine unsynced local transactions to cloud so other devices get them immediately
       if (unsyncedLocal.length > 0) {
         setTimeout(() => {
           this.pushLocalDataToCloud().catch(err => console.warn('Background auto-push unsynced local notice:', err));
@@ -1219,6 +1234,9 @@ export const StorageService = {
     const updated = [transaction, ...filtered];
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
     this.emitDataChange();
+
+    // Mark as pending sync locally until confirmed by Supabase
+    this.markBillAsPendingSync(transaction.billNo);
 
     // Deduct stock for sold items locally
     const products = this.getProducts();
@@ -1270,6 +1288,16 @@ export const StorageService = {
               return;
             }
             txData = insertRes.data;
+
+            // Successfully pushed to cloud: clear pending sync marker
+            this.removePendingSyncBill(transaction.billNo);
+
+            // Update local transaction with true Supabase UUID
+            if (txData?.id) {
+              const cur = this.getTransactions();
+              const withUuid = cur.map(t => t.billNo === transaction.billNo ? { ...t, id: txData.id } : t);
+              localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(withUuid));
+            }
 
             // Get all products to look up codes and brands
             const allProducts = this.getProducts();
@@ -1340,33 +1368,166 @@ export const StorageService = {
     return updated;
   },
 
-
   async saveTransactionAsync(transaction: SaleTransaction): Promise<SaleTransaction[]> {
     return this.saveTransaction(transaction);
   },
 
+  getDeletedBillNos(): string[] {
+    const data = localStorage.getItem(STORAGE_KEYS.DELETED_BILLS);
+    if (!data) return [];
+    try {
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  markBillAsDeleted(billNo?: string, id?: string): void {
+    const deleted = new Set(this.getDeletedBillNos());
+    if (billNo) deleted.add(billNo);
+    if (id) deleted.add(id);
+    localStorage.setItem(STORAGE_KEYS.DELETED_BILLS, JSON.stringify(Array.from(deleted)));
+    if (billNo) this.removePendingSyncBill(billNo);
+  },
+
+  isBillDeleted(billNo?: string, id?: string): boolean {
+    const deleted = new Set(this.getDeletedBillNos());
+    if (billNo && deleted.has(billNo)) return true;
+    if (id && deleted.has(id)) return true;
+    return false;
+  },
+
+  getPendingSyncBills(): string[] {
+    const data = localStorage.getItem(STORAGE_KEYS.PENDING_BILLS);
+    if (!data) return [];
+    try {
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  markBillAsPendingSync(billNo: string): void {
+    if (!billNo) return;
+    const pending = new Set(this.getPendingSyncBills());
+    pending.add(billNo);
+    localStorage.setItem(STORAGE_KEYS.PENDING_BILLS, JSON.stringify(Array.from(pending)));
+  },
+
+  removePendingSyncBill(billNo: string): void {
+    if (!billNo) return;
+    const pending = new Set(this.getPendingSyncBills());
+    pending.delete(billNo);
+    localStorage.setItem(STORAGE_KEYS.PENDING_BILLS, JSON.stringify(Array.from(pending)));
+  },
+
+  async deleteTransactionFromCloud(target: { id?: string; billNo: string; items?: BillItem[] }): Promise<void> {
+    if (!isSupabaseConfigured()) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      // 1. Look up cloud transaction to find true Supabase UUID without Postgres syntax errors
+      let cloudId: string | null = toValidUuidOrNull(target.id);
+      if (target.billNo) {
+        const { data: cloudTx } = await client
+          .from('sales_transactions')
+          .select('id')
+          .eq('bill_no', target.billNo)
+          .maybeSingle();
+        if (cloudTx?.id) {
+          cloudId = cloudTx.id;
+        }
+      }
+
+      // 2. Delete child transaction_items first to guarantee no FK blocks
+      if (cloudId) {
+        const { error: itemsErr } = await client
+          .from('transaction_items')
+          .delete()
+          .eq('transaction_id', cloudId);
+        if (itemsErr) console.warn('Cloud delete transaction_items notice:', itemsErr);
+      }
+
+      // 3. Delete from sales_transactions by UUID and by bill_no
+      if (cloudId) {
+        const { error: txErr } = await client
+          .from('sales_transactions')
+          .delete()
+          .eq('id', cloudId);
+        if (txErr) console.warn('Cloud delete sales_transactions by id notice:', txErr);
+      }
+
+      if (target.billNo) {
+        const { error: billErr } = await client
+          .from('sales_transactions')
+          .delete()
+          .eq('bill_no', target.billNo);
+        if (billErr) console.warn('Cloud delete sales_transactions by bill_no notice:', billErr);
+      }
+
+      // 4. Restore product stock in Supabase for each deleted item
+      if (Array.isArray(target.items) && target.items.length > 0) {
+        for (const item of target.items) {
+          try {
+            const { data: prod } = await client
+              .from('products')
+              .select('id, stock')
+              .or(`code.eq.${item.productId},name.eq.${item.productName}`)
+              .limit(1)
+              .maybeSingle();
+
+            if (prod) {
+              const restoredStock = (prod.stock || 0) + (item.quantity || 1);
+              await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+            }
+          } catch (stkErr) {
+            console.warn('Stock restore in cloud notice:', stkErr);
+          }
+        }
+      }
+
+      this.emitDataChange();
+    } catch (err) {
+      console.error('deleteTransactionFromCloud error:', err);
+    }
+  },
+
   deleteTransaction(id: string): SaleTransaction[] {
     const transactions = this.getTransactions();
-    const target = transactions.find(t => t.id === id || t.billNo === id);
-    const updated = transactions.filter(t => t.id !== id && t.billNo !== id);
+    const target = transactions.find(t => t.id === id || t.billNo === id) || { id, billNo: id, items: [] };
+    const updated = transactions.filter(t => t.id !== id && t.billNo !== id && (target.billNo ? t.billNo !== target.billNo : true));
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
 
-    // Asynchronous Cloud Sync
-    if (isSupabaseConfigured() && target) {
-      const client = getSupabaseClient();
-      if (client) {
-        (async () => {
-          try {
-            const { error } = await client
-              .from('sales_transactions')
-              .delete()
-              .or(`id.eq.${target.id},bill_no.eq.${target.billNo}`);
-            if (error) console.error('Cloud transaction delete error:', error);
-            else this.emitDataChange();
-          } catch (err) {
-            console.error('Cloud transaction delete error:', err);
+    if (target) {
+      this.markBillAsDeleted(target.billNo, target.id);
+
+      // Restore stock locally
+      if (Array.isArray(target.items) && target.items.length > 0) {
+        const products = this.getProducts();
+        let changed = false;
+        const updatedProducts = products.map(p => {
+          const soldItem = target.items.find(i =>
+            i.productId === p.id ||
+            i.productId === p.code ||
+            (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+          );
+          if (soldItem) {
+            changed = true;
+            return { ...p, stock: (p.stock || 0) + (soldItem.quantity || 1) };
           }
-        })();
+          return p;
+        });
+        if (changed) this.saveProducts(updatedProducts);
+      }
+
+      // Asynchronous Cloud Deletion
+      if (isSupabaseConfigured()) {
+        this.deleteTransactionFromCloud(target).catch(err => {
+          console.error('Cloud transaction delete notice:', err);
+        });
       }
     }
 
@@ -1375,7 +1536,178 @@ export const StorageService = {
   },
 
   async deleteTransactionAsync(id: string): Promise<SaleTransaction[]> {
-    return this.deleteTransaction(id);
+    const transactions = this.getTransactions();
+    const target = transactions.find(t => t.id === id || t.billNo === id) || { id, billNo: id, items: [] };
+    const updated = transactions.filter(t => t.id !== id && t.billNo !== id && (target.billNo ? t.billNo !== target.billNo : true));
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
+
+    if (target) {
+      this.markBillAsDeleted(target.billNo, target.id);
+
+      // Restore stock locally
+      if (Array.isArray(target.items) && target.items.length > 0) {
+        const products = this.getProducts();
+        let changed = false;
+        const updatedProducts = products.map(p => {
+          const soldItem = target.items.find(i =>
+            i.productId === p.id ||
+            i.productId === p.code ||
+            (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+          );
+          if (soldItem) {
+            changed = true;
+            return { ...p, stock: (p.stock || 0) + (soldItem.quantity || 1) };
+          }
+          return p;
+        });
+        if (changed) this.saveProducts(updatedProducts);
+      }
+
+      if (isSupabaseConfigured()) {
+        await this.deleteTransactionFromCloud(target);
+      }
+    }
+
+    this.emitDataChange();
+    return updated;
+  },
+
+  async deleteTransactionItem(txIdOrBillNo: string, itemIdx: number): Promise<SaleTransaction[]> {
+    const transactions = this.getTransactions();
+    const tx = transactions.find(t => t.id === txIdOrBillNo || t.billNo === txIdOrBillNo);
+    if (!tx || !Array.isArray(tx.items) || tx.items.length === 0) {
+      return transactions;
+    }
+
+    // If only 1 item in transaction, deleting it deletes the whole transaction
+    if (tx.items.length <= 1) {
+      return this.deleteTransactionAsync(tx.id || tx.billNo);
+    }
+
+    const removedItem = tx.items[itemIdx];
+    if (!removedItem) return transactions;
+
+    const remainingItems = tx.items.filter((_, idx) => idx !== itemIdx);
+
+    // Recalculate financial totals
+    const newSubtotal = remainingItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+    const newFinalAmount = remainingItems.reduce((acc, i) => acc + ((i.discountedPrice ?? i.price) * i.quantity), 0);
+    const newTotalDiscount = Math.max(0, newSubtotal - newFinalAmount);
+
+    let newSplitDetails = tx.splitDetails;
+    if (tx.paymentMode === 'Split' && tx.splitDetails) {
+      const oldFinal = tx.finalAmount || 1;
+      const ratio = newFinalAmount / oldFinal;
+      newSplitDetails = {
+        cash: Math.round(Number(tx.splitDetails.cash || 0) * ratio * 100) / 100,
+        upi: Math.round(Number(tx.splitDetails.upi || 0) * ratio * 100) / 100
+      };
+    }
+
+    const updatedTx: SaleTransaction = {
+      ...tx,
+      items: remainingItems,
+      subtotal: newSubtotal,
+      finalAmount: newFinalAmount,
+      totalDiscount: newTotalDiscount,
+      splitDetails: newSplitDetails
+    };
+
+    const updatedList = transactions.map(t => (t.id === tx.id || t.billNo === tx.billNo) ? updatedTx : t);
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updatedList));
+
+    // Restore stock locally for the removed item
+    const products = this.getProducts();
+    let prodsChanged = false;
+    const updatedProducts = products.map(p => {
+      if (
+        p.id === removedItem.productId ||
+        p.code === removedItem.productId ||
+        (removedItem.productName && p.name && removedItem.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+      ) {
+        prodsChanged = true;
+        return { ...p, stock: (p.stock || 0) + (removedItem.quantity || 1) };
+      }
+      return p;
+    });
+    if (prodsChanged) this.saveProducts(updatedProducts);
+
+    // Asynchronous Cloud Sync
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        try {
+          // 1. Look up cloud transaction ID
+          let cloudTxId = toValidUuidOrNull(tx.id);
+          const { data: cloudTx } = await client
+            .from('sales_transactions')
+            .select('id')
+            .eq('bill_no', tx.billNo)
+            .maybeSingle();
+
+          if (cloudTx?.id) cloudTxId = cloudTx.id;
+
+          // 2. Delete the item from transaction_items if child records exist
+          if (cloudTxId) {
+            if (toValidUuidOrNull(removedItem.id)) {
+              await client.from('transaction_items').delete().eq('id', removedItem.id);
+            } else {
+              await client
+                .from('transaction_items')
+                .delete()
+                .eq('transaction_id', cloudTxId)
+                .eq('product_name', removedItem.productName);
+            }
+          }
+
+          // 3. Update the parent sales_transactions in Supabase
+          const splitPayload = {
+            ...(updatedTx.splitDetails || {}),
+            ...(updatedTx.customFields && Object.keys(updatedTx.customFields).length > 0 ? { __custom_fields: updatedTx.customFields } : {}),
+            __items: updatedTx.items
+          };
+
+          const updateQuery = client
+            .from('sales_transactions')
+            .update({
+              subtotal: updatedTx.subtotal,
+              total_discount: updatedTx.totalDiscount,
+              final_amount: updatedTx.finalAmount,
+              split_details: splitPayload
+            });
+
+          if (cloudTxId) {
+            await updateQuery.eq('id', cloudTxId);
+          } else {
+            await updateQuery.eq('bill_no', updatedTx.billNo);
+          }
+
+          // 4. Restore product stock in Supabase
+          try {
+            const { data: prod } = await client
+              .from('products')
+              .select('id, stock')
+              .or(`code.eq.${removedItem.productId},name.eq.${removedItem.productName}`)
+              .limit(1)
+              .maybeSingle();
+
+            if (prod) {
+              const restoredStock = (prod.stock || 0) + (removedItem.quantity || 1);
+              await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+            }
+          } catch (stkErr) {
+            console.warn('Stock restore in cloud notice:', stkErr);
+          }
+
+          this.emitDataChange();
+        } catch (err) {
+          console.error('deleteTransactionItem cloud error:', err);
+        }
+      }
+    }
+
+    this.emitDataChange();
+    return updatedList;
   },
 
   // ==========================================
@@ -2065,9 +2397,24 @@ export const StorageService = {
       }
 
       // 2. Push sales transactions
+      // First execute any pending deletions in cloud
+      const deletedBills = new Set(this.getDeletedBillNos());
+      for (const delBillNo of deletedBills) {
+        try {
+          await this.deleteTransactionFromCloud({ billNo: delBillNo });
+        } catch {
+          // ignore
+        }
+      }
+
       const localTransactions = this.getTransactions();
       let txCount = 0;
       for (const tx of localTransactions) {
+        // Strictly skip deleted transactions
+        if (deletedBills.has(tx.billNo) || deletedBills.has(tx.id)) {
+          continue;
+        }
+
         // Check if transaction already exists in cloud
         const { data: existing } = await client
           .from('sales_transactions')
@@ -2105,11 +2452,13 @@ export const StorageService = {
 
           if (!insertRes.error && insertRes.data) {
             txCount++;
+            this.removePendingSyncBill(tx.billNo);
             await this.backfillCloudLineItems(client, insertRes.data.id, tx.items || [], localProducts);
           } else {
             console.warn('pushLocalDataToCloud insert notice for bill:', tx.billNo, insertRes.error);
           }
         } else if (targetTxId) {
+          this.removePendingSyncBill(tx.billNo);
           // If transaction already exists, check if its line items are missing in cloud
           const { data: existingItems } = await client
             .from('transaction_items')
