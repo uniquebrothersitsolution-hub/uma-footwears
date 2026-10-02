@@ -29,6 +29,7 @@ export const AdminInventory: React.FC = () => {
   const [productType, setProductType] = useState('Sandals');
   const [price, setPrice] = useState<number | string>(1000);
   const [wholesalePrice, setWholesalePrice] = useState<number | string>(600);
+  const [wholesalePercent, setWholesalePercent] = useState<number | string>('');
   const [discountPercent, setDiscountPercent] = useState<number | string>(10);
   const [stock, setStock] = useState<number | string>(10);
   const [sizes, setSizes] = useState<string[]>(['6', '7', '8', '9', '10', '11']);
@@ -67,6 +68,7 @@ export const AdminInventory: React.FC = () => {
     setProductType('Sandals');
     setPrice('');
     setWholesalePrice('');
+    setWholesalePercent('');
     setDiscountPercent(0);
     setStock(20);
     setSizes(['6', '7', '8', '9', '10', '11']);
@@ -83,6 +85,14 @@ export const AdminInventory: React.FC = () => {
     setProductType(product.type || 'Sandals');
     setPrice(product.price);
     setWholesalePrice(product.wholesalePrice || 0);
+    // If wholesalePercent is stored, use it; otherwise compute from price & wholesalePrice
+    if (product.wholesalePercent != null && product.wholesalePercent >= 0) {
+      setWholesalePercent(product.wholesalePercent);
+    } else if (product.wholesalePrice > 0 && product.price > 0) {
+      setWholesalePercent(Math.round(((product.price - product.wholesalePrice) / product.price) * 100 * 100) / 100);
+    } else {
+      setWholesalePercent('');
+    }
     setDiscountPercent(product.discountPercent || 0);
     setStock(product.stock);
     setSizes(product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']);
@@ -127,9 +137,13 @@ export const AdminInventory: React.FC = () => {
     const numStock = typeof stock === 'number' ? stock : (stock === '' ? 0 : parseInt(String(stock), 10));
 
     const finalPrice = Math.round(numPrice * 100) / 100;
+    const numWholesalePct = typeof wholesalePercent === 'number' ? wholesalePercent : (wholesalePercent === '' ? NaN : parseFloat(wholesalePercent));
     const finalWholesale = !isNaN(numWholesale) && numWholesale > 0 
       ? Math.round(numWholesale * 100) / 100 
       : Math.round(finalPrice * 0.6 * 100) / 100;
+    const finalWholesalePct = !isNaN(numWholesalePct) && numWholesalePct >= 0
+      ? Math.round(numWholesalePct * 100) / 100
+      : (finalWholesale > 0 && finalPrice > 0 ? Math.round(((finalPrice - finalWholesale) / finalPrice) * 100 * 100) / 100 : 0);
     const finalDisc = !isNaN(numDisc) ? Math.max(0, Math.round(numDisc * 100) / 100) : 0;
 
     const productData: Product = {
@@ -142,6 +156,7 @@ export const AdminInventory: React.FC = () => {
       colors: colors.length > 0 ? colors : [{ name: 'Standard' }],
       price: finalPrice,
       wholesalePrice: finalWholesale,
+      wholesalePercent: finalWholesalePct,
       discountPercent: finalDisc,
       stock: !isNaN(numStock) ? numStock : 0
     };
@@ -624,7 +639,21 @@ export const AdminInventory: React.FC = () => {
                     {/* ADMIN ONLY: Wholesale Price */}
                     {userRole === 'admin' && (
                       <td className="py-3.5 px-4 font-mono bg-amber-50/50 text-amber-900 font-bold">
-                        ₹{product.wholesalePrice ? product.wholesalePrice.toFixed(2).replace(/\.00$/, '') : '-'}
+                        <div className="flex items-center space-x-1.5">
+                          <span>₹{product.wholesalePrice ? product.wholesalePrice.toFixed(2).replace(/\.00$/, '') : '-'}</span>
+                          {(() => {
+                            const wsPct = product.wholesalePercent != null && product.wholesalePercent >= 0
+                              ? product.wholesalePercent
+                              : (product.wholesalePrice > 0 && product.price > 0
+                                ? Math.round(((product.price - product.wholesalePrice) / product.price) * 100 * 10) / 10
+                                : null);
+                            return wsPct != null ? (
+                              <span className="text-[10px] bg-amber-200/60 text-amber-800 px-1.5 py-0.5 rounded-md font-bold border border-amber-200">
+                                {wsPct}%
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
                         {product.wholesalePrice > 0 && (() => {
                           const discPrice = product.discountPercent > 0 
                             ? Number((product.price * (1 - product.discountPercent / 100)).toFixed(2))
@@ -842,7 +871,7 @@ export const AdminInventory: React.FC = () => {
               </div>
 
               {/* Prices */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#1E1B4B] uppercase mb-1">Retail MRP ₹</label>
                   <input
@@ -851,21 +880,18 @@ export const AdminInventory: React.FC = () => {
                     min="0"
                     step="any"
                     value={price}
-                    onChange={(e) => setPrice(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPrice(val);
+                      // Recalculate wholesale price from wholesale % when MRP changes
+                      const numMrp = parseFloat(val);
+                      const numWsPct = typeof wholesalePercent === 'number' ? wholesalePercent : parseFloat(wholesalePercent);
+                      if (!isNaN(numMrp) && numMrp > 0 && !isNaN(numWsPct) && numWsPct >= 0) {
+                        const wsPrice = Math.round(numMrp * (1 - numWsPct / 100) * 100) / 100;
+                        setWholesalePrice(wsPrice);
+                      }
+                    }}
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] font-mono text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-[#6D5DFB]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-amber-700 uppercase mb-1">Wholesale ₹</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={wholesalePrice}
-                    onChange={(e) => setWholesalePrice(e.target.value)}
-                    placeholder="Admin only"
-                    className="w-full bg-amber-50 border border-amber-200 text-amber-900 font-mono text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-amber-400"
                   />
                 </div>
 
@@ -881,6 +907,86 @@ export const AdminInventory: React.FC = () => {
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#F59E0B] font-mono text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-[#6D5DFB]"
                   />
                 </div>
+              </div>
+
+              {/* Wholesale Price & Wholesale % Row */}
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center space-x-1.5">
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>Wholesale Pricing (Admin Only)</span>
+                  </label>
+                  <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-mono font-bold border border-amber-200">
+                    ADMIN
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-amber-800 mb-1">Wholesale %</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={wholesalePercent}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setWholesalePercent(val);
+                          const numPct = parseFloat(val);
+                          const numMrp = typeof price === 'number' ? price : parseFloat(price);
+                          if (!isNaN(numPct) && numPct >= 0 && !isNaN(numMrp) && numMrp > 0) {
+                            const wsPrice = Math.round(numMrp * (1 - numPct / 100) * 100) / 100;
+                            setWholesalePrice(wsPrice);
+                          } else if (val === '') {
+                            setWholesalePrice('');
+                          }
+                        }}
+                        placeholder="e.g. 40"
+                        className="w-full bg-white border border-amber-300 text-amber-900 font-mono text-xs rounded-xl p-2.5 pr-8 font-bold focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition"
+                      />
+                      <span className="absolute right-3 top-2.5 text-amber-600 text-xs font-bold">%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-amber-800 mb-1">Wholesale Price ₹</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={wholesalePrice}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setWholesalePrice(val);
+                        const numWs = parseFloat(val);
+                        const numMrp = typeof price === 'number' ? price : parseFloat(price);
+                        if (!isNaN(numWs) && !isNaN(numMrp) && numMrp > 0) {
+                          const pct = Math.round(((numMrp - numWs) / numMrp) * 100 * 100) / 100;
+                          setWholesalePercent(Math.max(0, pct));
+                        } else if (val === '') {
+                          setWholesalePercent('');
+                        }
+                      }}
+                      placeholder="Auto from %"
+                      className="w-full bg-white border border-amber-300 text-amber-900 font-mono text-xs rounded-xl p-2.5 font-bold focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition"
+                    />
+                  </div>
+                </div>
+                {/* Quick wholesale % preview */}
+                {(() => {
+                  const numMrp = typeof price === 'number' ? price : parseFloat(price);
+                  const numWs = typeof wholesalePrice === 'number' ? wholesalePrice : parseFloat(wholesalePrice);
+                  const numPct = typeof wholesalePercent === 'number' ? wholesalePercent : parseFloat(wholesalePercent);
+                  if (!isNaN(numMrp) && numMrp > 0 && !isNaN(numWs) && numWs > 0) {
+                    return (
+                      <div className="text-[11px] text-amber-800 font-medium flex items-center justify-between bg-amber-100/60 px-2.5 py-1.5 rounded-lg">
+                        <span>MRP ₹{numMrp} → Wholesale ₹{numWs} <span className="text-amber-600">({!isNaN(numPct) ? numPct : ((numMrp - numWs) / numMrp * 100).toFixed(1)}% off)</span></span>
+                        <span className="font-bold font-mono">Margin: ₹{(numMrp - numWs).toFixed(2).replace(/\.00$/, '')}</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               {/* ADMIN ONLY: Margin preview (Discounted - Wholesale) */}

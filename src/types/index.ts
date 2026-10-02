@@ -25,6 +25,7 @@ export interface Product {
   colors?: ProductColor[];
   price: number;            // MRP / Standard Retail Price
   wholesalePrice: number;   // Wholesale Cost Price (Admin Only)
+  wholesalePercent?: number; // Wholesale discount % from MRP (Admin Only)
   discountPercent: number;  // Default discount %
   stock: number;            // Inventory stock quantity
   code?: string;
