@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ShoppingCart, Plus, Trash2, Printer, CheckCircle2, User, Phone, DollarSign, Tag, Ruler, Sparkles, RefreshCw, Layers, AlertTriangle, Search, Barcode, X } from 'lucide-react';
 import { Product, BillItem, SaleTransaction, ProductColor } from '../types';
-import { StorageService } from '../services/storage';
+import { StorageService, getSizeStockQty } from '../services/storage';
 import { deriveFootwearType } from '../services/exportExcel';
 import { useAuth } from '../context/AuthContext';
 
@@ -95,7 +95,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     setDiscountedPrice(Math.round(netPrice * 100) / 100);
 
     if (prod.stock <= 0) {
-      setCartErrorMessage(`Notice: "${prod.name}" is OUT OF STOCK (0 available in inventory). It cannot be billed.`);
+      setCartErrorMessage(`Notice: "${prod.name}" is completely OUT OF STOCK (0 available in any size). It cannot be billed.`);
     }
   };
 
@@ -206,21 +206,43 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       (p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
     );
 
-    // STRICT STOCK CHECK: Cannot bill if out of stock
+    // STRICT STOCK CHECK: Cannot bill if out of stock (size-wise)
     if (prod) {
+      const chosenSz = selectedSize.trim() || 'Standard';
+      const sizeQty = getSizeStockQty(prod, chosenSz);
+      
       if (prod.stock <= 0) {
-        setCartErrorMessage(`Cannot bill "${prod.name}" — This product is currently OUT OF STOCK (0 pairs available in inventory).`);
+        setCartErrorMessage(`Cannot bill "${prod.name}" — This product is completely OUT OF STOCK (0 pairs available in any size).`);
         return;
       }
 
+      if (sizeQty <= 0 && prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        setCartErrorMessage(`Cannot bill "${prod.name}" in Size ${chosenSz} — This size is OUT OF STOCK (0 pairs available). Other sizes may still be available.`);
+        return;
+      }
+
+      // Check how many of this product + this size are already in cart
       const alreadyInCartQty = cartItems
+        .filter(i => (i.productId === prod.code || (prod.name && i.productName.toLowerCase() === prod.name.toLowerCase())) && i.size === chosenSz)
+        .reduce((sum, i) => sum + i.quantity, 0);
+
+      if ((alreadyInCartQty + quantity) > sizeQty && prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        const remaining = Math.max(0, sizeQty - alreadyInCartQty);
+        setCartErrorMessage(
+          `Cannot bill ${quantity} pair(s) of "${prod.name}" Size ${chosenSz}. Available stock for Size ${chosenSz} is ${sizeQty}${alreadyInCartQty > 0 ? ` (${alreadyInCartQty} already in cart, only ${remaining} more can be added)` : ''}.`
+        );
+        return;
+      }
+
+      // Also check total stock across all sizes
+      const totalAlreadyInCart = cartItems
         .filter(i => i.productId === prod.code || (prod.name && i.productName.toLowerCase() === prod.name.toLowerCase()))
         .reduce((sum, i) => sum + i.quantity, 0);
 
-      if ((alreadyInCartQty + quantity) > prod.stock) {
-        const remaining = Math.max(0, prod.stock - alreadyInCartQty);
+      if ((totalAlreadyInCart + quantity) > prod.stock) {
+        const remaining = Math.max(0, prod.stock - totalAlreadyInCart);
         setCartErrorMessage(
-          `Cannot bill ${quantity} pair(s) of "${prod.name}". Total available stock is ${prod.stock}${alreadyInCartQty > 0 ? ` (${alreadyInCartQty} already in cart, only ${remaining} more can be added)` : ''}.`
+          `Cannot bill ${quantity} pair(s) of "${prod.name}". Total available stock is ${prod.stock}${totalAlreadyInCart > 0 ? ` (${totalAlreadyInCart} already in cart, only ${remaining} more can be added)` : ''}.`
         );
         return;
       }
@@ -283,7 +305,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     if (cartItems.length === 0) return;
     setCartErrorMessage('');
 
-    // Strict stock verification across all cart items before saving
+    // Strict stock verification across all cart items before saving (size-wise)
     const freshProducts = StorageService.getProducts();
     for (const item of cartItems) {
       const prod = freshProducts.find(p =>
@@ -295,6 +317,18 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       if (prod) {
         if (prod.stock <= 0) {
           setCartErrorMessage(`Cannot complete bill: "${item.productName}" is OUT OF STOCK (0 available in inventory). Please remove it from the cart.`);
+          return;
+        }
+        const itemSize = item.size || 'Standard';
+        const sizeQty = getSizeStockQty(prod, itemSize);
+        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && sizeQty <= 0) {
+          setCartErrorMessage(`Cannot complete bill: "${item.productName}" Size ${itemSize} is OUT OF STOCK. Please remove it from the cart.`);
+          return;
+        }
+        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && item.quantity > sizeQty) {
+          setCartErrorMessage(
+            `Cannot complete bill: Quantity for "${item.productName}" Size ${itemSize} (${item.quantity}) exceeds available stock (${sizeQty}). Please adjust.`
+          );
           return;
         }
         if (item.quantity > prod.stock) {
@@ -355,6 +389,15 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     (productNameInput.trim() && p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
   );
   const isOutOfStock = Boolean(activeProduct && activeProduct.stock <= 0);
+  // Also check if selected size specifically is out of stock
+  const isSelectedSizeOutOfStock = Boolean(
+    activeProduct && 
+    selectedSize.trim() && 
+    activeProduct.sizeStock && 
+    Object.keys(activeProduct.sizeStock).length > 0 &&
+    getSizeStockQty(activeProduct, selectedSize.trim()) <= 0
+  );
+  const effectivelyOutOfStock = isOutOfStock || isSelectedSizeOutOfStock;
 
   // Check if any item currently in cart has insufficient inventory
   const hasCartStockIssue = cartItems.some(item => {
@@ -364,7 +407,14 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
       (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
     );
-    return Boolean(prod && (prod.stock <= 0 || item.quantity > prod.stock));
+    if (!prod) return false;
+    if (prod.stock <= 0) return true;
+    const itemSize = item.size || 'Standard';
+    if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+      const sizeQty = getSizeStockQty(prod, itemSize);
+      if (sizeQty <= 0 || item.quantity > sizeQty) return true;
+    }
+    return item.quantity > prod.stock;
   });
 
   return (
@@ -551,34 +601,66 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
 
                 {/* Real-time Stock Status Banner */}
                 {activeProduct && (
-                  <div className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition-all ${
+                  <div className={`p-2.5 rounded-xl border text-xs flex flex-col gap-1.5 transition-all ${
                     isOutOfStock
+                      ? 'bg-red-50 border-red-200 text-red-700'
+                      : isSelectedSizeOutOfStock
                       ? 'bg-red-50 border-red-200 text-red-700'
                       : activeProduct.stock <= 3
                       ? 'bg-amber-50 border-amber-200 text-amber-800'
                       : 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   }`}>
-                    <div className="flex items-center space-x-1.5 font-semibold">
-                      {isOutOfStock ? (
-                        <>
-                          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                          <span>OUT OF STOCK: 0 available in inventory — Cannot bill!</span>
-                        </>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5 font-semibold">
+                        {isOutOfStock ? (
+                          <>
+                            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                            <span>OUT OF STOCK: 0 available in any size — Cannot bill!</span>
+                          </>
+                        ) : isSelectedSizeOutOfStock ? (
+                          <>
+                            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                            <span>Size {selectedSize} is OUT OF STOCK — Pick a different size!</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`w-2 h-2 rounded-full ${activeProduct.stock <= 3 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+                            <span>Total Stock: <strong className="font-mono">{activeProduct.stock}</strong> pair(s)
+                              {selectedSize.trim() && activeProduct.sizeStock && activeProduct.sizeStock[selectedSize.trim()] !== undefined && (
+                                <> · Size {selectedSize}: <strong className="font-mono">{activeProduct.sizeStock[selectedSize.trim()]}</strong></>  
+                              )}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {isOutOfStock || isSelectedSizeOutOfStock ? (
+                        <span className="text-[10px] bg-red-200 text-red-900 font-extrabold px-2 py-0.5 rounded-full uppercase">
+                          {isOutOfStock ? 'Stock Empty' : `Size ${selectedSize} Empty`}
+                        </span>
                       ) : (
-                        <>
-                          <span className={`w-2 h-2 rounded-full ${activeProduct.stock <= 3 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-                          <span>In Stock: <strong className="font-mono">{activeProduct.stock}</strong> pair(s) available</span>
-                        </>
+                        <span className="text-[10px] text-[#64748B] font-mono">
+                          Code: {activeProduct.code}
+                        </span>
                       )}
                     </div>
-                    {isOutOfStock ? (
-                      <span className="text-[10px] bg-red-200 text-red-900 font-extrabold px-2 py-0.5 rounded-full uppercase">
-                        Stock Empty
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-[#64748B] font-mono">
-                        Code: {activeProduct.code}
-                      </span>
+                    {/* Size-wise stock mini-breakdown */}
+                    {activeProduct.sizeStock && Object.keys(activeProduct.sizeStock).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(activeProduct.sizeStock).map(([sz, qty]) => (
+                          <span
+                            key={sz}
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
+                              qty <= 0
+                                ? 'bg-red-100 text-red-500 border-red-200 line-through'
+                                : selectedSize === sz
+                                ? 'bg-[#6D5DFB] text-white border-[#6D5DFB]'
+                                : 'bg-white/60 text-[#1E1B4B] border-[#E7E5EF]'
+                            }`}
+                          >
+                            {sz}:{qty}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}
@@ -602,22 +684,36 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   )}
                 </div>
 
-                {/* Quick Size Selector Buttons */}
+                {/* Quick Size Selector Buttons with stock counts */}
                 <div className="flex flex-wrap items-center gap-2 p-2 bg-[#F7F8FC] border border-[#E7E5EF] rounded-xl">
-                  {availableSizes.map((sz) => (
-                    <button
-                      key={sz}
-                      type="button"
-                      onClick={() => setSelectedSize(selectedSize === sz ? '' : sz)}
-                      className={`min-w-[40px] px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        selectedSize === sz
-                          ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
-                          : 'bg-white text-[#1E1B4B] hover:bg-[#EEEBFF] border border-[#E7E5EF]'
-                      }`}
-                    >
-                      {sz}
-                    </button>
-                  ))}
+                  {availableSizes.map((sz) => {
+                    const sizeQty = activeProduct?.sizeStock?.[sz];
+                    const isSizeOOS = sizeQty !== undefined && sizeQty <= 0;
+                    return (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => setSelectedSize(selectedSize === sz ? '' : sz)}
+                        disabled={isSizeOOS}
+                        className={`min-w-[40px] px-3 py-1.5 rounded-lg text-xs font-bold transition-all relative ${
+                          isSizeOOS
+                            ? 'bg-red-50 text-red-400 border border-red-200 cursor-not-allowed line-through opacity-60'
+                            : selectedSize === sz
+                            ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
+                            : 'bg-white text-[#1E1B4B] hover:bg-[#EEEBFF] border border-[#E7E5EF]'
+                        }`}
+                      >
+                        {sz}
+                        {sizeQty !== undefined && (
+                          <span className={`block text-[8px] font-mono mt-0.5 ${
+                            isSizeOOS ? 'text-red-400' : selectedSize === sz ? 'text-white/80' : 'text-[#64748B]'
+                          }`}>
+                            {isSizeOOS ? 'nil' : `${sizeQty}`}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Custom / Direct Size Input */}
@@ -749,17 +845,17 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                 <div className="flex-1 pt-5">
                   <button
                     type="submit"
-                    disabled={isOutOfStock}
+                    disabled={effectivelyOutOfStock}
                     className={`w-full py-3 px-4 font-semibold rounded-xl shadow-sm flex items-center justify-center space-x-2 transition-all ${
-                      isOutOfStock
+                      effectivelyOutOfStock
                         ? 'bg-red-100 border border-red-300 text-red-500 cursor-not-allowed opacity-80'
                         : 'bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white active:scale-[0.98]'
                     }`}
                   >
-                    {isOutOfStock ? (
+                    {effectivelyOutOfStock ? (
                       <>
                         <AlertTriangle className="w-5 h-5 text-red-500" />
-                        <span>Out of Stock — Cannot Bill</span>
+                        <span>{isSelectedSizeOutOfStock ? `Size ${selectedSize} Out of Stock` : 'Out of Stock — Cannot Bill'}</span>
                       </>
                     ) : (
                       <>

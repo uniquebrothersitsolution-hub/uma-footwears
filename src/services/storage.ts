@@ -509,6 +509,38 @@ const INITIAL_SETTINGS: ShopSettings = {
   footerMessage: 'Thank you for shopping at UMA FOOTWEARS! Goods once sold can be exchanged within 7 days with valid receipt.'
 };
 
+// Helper: Generate sizeStock from legacy product (distribute total stock evenly across sizes)
+function migrateSizeStock(product: Product): Record<string, number> {
+  if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+    return product.sizeStock;
+  }
+  const sizes = product.sizes && product.sizes.length > 0 ? product.sizes : ['7', '8', '9', '10'];
+  const total = product.stock || 0;
+  const perSize = Math.floor(total / sizes.length);
+  const remainder = total % sizes.length;
+  const sizeStock: Record<string, number> = {};
+  sizes.forEach((sz, idx) => {
+    sizeStock[sz] = perSize + (idx < remainder ? 1 : 0);
+  });
+  return sizeStock;
+}
+
+// Helper: Compute total stock from sizeStock
+function computeTotalStock(sizeStock: Record<string, number>): number {
+  return Object.values(sizeStock).reduce((sum, qty) => sum + Math.max(0, qty), 0);
+}
+
+// Helper: Get stock for a specific size (with fallback)
+function getSizeStockQty(product: Product, size: string): number {
+  if (product.sizeStock && product.sizeStock[size] !== undefined) {
+    return Math.max(0, product.sizeStock[size]);
+  }
+  // Fallback: if no sizeStock, return total stock
+  return Math.max(0, product.stock || 0);
+}
+
+export { migrateSizeStock, computeTotalStock, getSizeStockQty };
+
 export const StorageService = {
   // Broadcast update event to all components & tabs
   emitDataChange(): void {
@@ -602,10 +634,12 @@ export const StorageService = {
     try {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
-        const mapped = parsed.map((p: Product) => ({
-          ...p,
-          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10']
-        }));
+        const mapped = parsed.map((p: Product) => {
+          const sizes = p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10'];
+          const sizeStock = migrateSizeStock({ ...p, sizes });
+          const stock = computeTotalStock(sizeStock);
+          return { ...p, sizes, sizeStock, stock };
+        });
         return this.sortProductsByOrder(mapped);
       }
       return [];
@@ -1238,12 +1272,33 @@ export const StorageService = {
     // Mark as pending sync locally until confirmed by Supabase
     this.markBillAsPendingSync(transaction.billNo);
 
-    // Deduct stock for sold items locally
+    // Deduct stock for sold items locally (size-wise)
     const products = this.getProducts();
     const updatedProducts = products.map(p => {
-      const soldItem = transaction.items.find(i => i.productId === p.id || i.productId === p.code || i.productName === p.name);
-      if (soldItem) {
-        return { ...p, stock: Math.max(0, p.stock - soldItem.quantity) };
+      const soldItems = transaction.items.filter(i => i.productId === p.id || i.productId === p.code || i.productName === p.name);
+      if (soldItems.length > 0) {
+        const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+        for (const soldItem of soldItems) {
+          const size = soldItem.size || 'Standard';
+          if (updatedSizeStock[size] !== undefined) {
+            updatedSizeStock[size] = Math.max(0, updatedSizeStock[size] - soldItem.quantity);
+          } else {
+            // Fallback: if size key doesn't exist, deduct from total (legacy behavior)
+            const totalBefore = computeTotalStock(updatedSizeStock);
+            const newTotal = Math.max(0, totalBefore - soldItem.quantity);
+            // Distribute reduction proportionally
+            const diff = totalBefore - newTotal;
+            let remaining = diff;
+            for (const sz of Object.keys(updatedSizeStock)) {
+              if (remaining <= 0) break;
+              const deduct = Math.min(updatedSizeStock[sz], remaining);
+              updatedSizeStock[sz] -= deduct;
+              remaining -= deduct;
+            }
+          }
+        }
+        const newTotalStock = computeTotalStock(updatedSizeStock);
+        return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };
       }
       return p;
     });

@@ -27,7 +27,8 @@ export interface Product {
   wholesalePrice: number;   // Wholesale Cost Price (Admin Only)
   wholesalePercent?: number; // Wholesale discount % from MRP (Admin Only)
   discountPercent: number;  // Default discount %
-  stock: number;            // Inventory stock quantity
+  stock: number;            // Inventory stock quantity (total, computed from sizeStock)
+  sizeStock?: Record<string, number>; // Per-size stock: e.g. { "6": 4, "7": 2, "8": 3 }
   code?: string;
 }
 
