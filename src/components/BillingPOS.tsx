@@ -5,7 +5,7 @@ import { StorageService, getSizeStockQty } from '../services/storage';
 import { deriveFootwearType } from '../services/exportExcel';
 import { useAuth } from '../context/AuthContext';
 
-const DEFAULT_SIZES = ['6', '7', '8', '9', '10', '11'];
+const DEFAULT_SIZES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
 interface BillingPOSProps {
   onPrintBill: (transaction: SaleTransaction) => void;

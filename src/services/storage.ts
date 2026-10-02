@@ -21,6 +21,8 @@ function toValidUuidOrNull(val?: string | null): string | null {
   return null;
 }
 
+export const DEFAULT_PRODUCT_SIZES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
 // Initial Seed Data for UMA FOOTWEARS
 const INITIAL_PRODUCTS: Product[] = [
   {
@@ -724,7 +726,7 @@ export const StorageService = {
               discount_percent: product.discountPercent || 0,
               stock: product.stock,
               colors: product.colors || [],
-              sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']
+              sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES
             }, { onConflict: 'code' }).select();
 
             if (error) {
@@ -763,7 +765,7 @@ export const StorageService = {
             discount_percent: product.discountPercent || 0,
             stock: product.stock,
             colors: product.colors || [],
-            sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']
+            sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES
           }, { onConflict: 'code' }).select();
 
           if (error) {
@@ -803,7 +805,7 @@ export const StorageService = {
               discount_percent: product.discountPercent || 0,
               stock: product.stock,
               colors: product.colors || [],
-              sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11'],
+              sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES,
               updated_at: new Date().toISOString()
             }).eq('code', product.code);
             if (error) console.error('Cloud product update error:', error);
@@ -835,7 +837,7 @@ export const StorageService = {
             discount_percent: product.discountPercent || 0,
             stock: product.stock,
             colors: product.colors || [],
-            sizes: product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11'],
+            sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES,
             updated_at: new Date().toISOString()
           }).eq('code', product.code);
           if (error) console.error('Cloud product update error:', error);
@@ -2446,7 +2448,7 @@ export const StorageService = {
           discount_percent: p.discountPercent || 0,
           stock: p.stock,
           colors: p.colors || [],
-          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : ['6', '7', '8', '9', '10', '11']
+          sizes: p.sizes && p.sizes.length > 0 ? p.sizes : DEFAULT_PRODUCT_SIZES
         }, { onConflict: 'code' });
         if (!error) prodCount++;
       }

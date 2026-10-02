@@ -5,6 +5,8 @@ import { StorageService, computeTotalStock, migrateSizeStock } from '../services
 import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 
+const STANDARD_SIZES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
 export const AdminInventory: React.FC = () => {
   const { userRole } = useAuth();
 
@@ -25,7 +27,7 @@ export const AdminInventory: React.FC = () => {
   // Form inputs
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('Sports');
+  const [category, setCategory] = useState('');
   const [productType, setProductType] = useState('Sandals');
   const [price, setPrice] = useState<number | string>(1000);
   const [wholesalePrice, setWholesalePrice] = useState<number | string>(600);
@@ -33,7 +35,7 @@ export const AdminInventory: React.FC = () => {
   const [discountPercent, setDiscountPercent] = useState<number | string>(10);
   const [stock, setStock] = useState<number | string>(10);
   const [sizeStockMap, setSizeStockMap] = useState<Record<string, number>>({});
-  const [sizes, setSizes] = useState<string[]>(['6', '7', '8', '9', '10', '11']);
+  const [sizes, setSizes] = useState<string[]>(STANDARD_SIZES);
   const [newSizeInput, setNewSizeInput] = useState('');
   const [colors, setColors] = useState<ProductColor[]>([{ name: 'Black', hex: '#000000' }]);
   const [newColorName, setNewColorName] = useState('');
@@ -63,15 +65,15 @@ export const AdminInventory: React.FC = () => {
 
   const openAddModal = () => {
     setEditingProductId(null);
-    setCode(`UMA-FT-${Math.floor(10 + Math.random() * 90)}`);
+    setCode('');
     setName('');
-    setCategory('Sports');
+    setCategory('');
     setProductType('Sandals');
     setPrice('');
     setWholesalePrice('');
     setWholesalePercent('');
     setDiscountPercent(0);
-    const defaultSizes = ['6', '7', '8', '9', '10', '11'];
+    const defaultSizes = STANDARD_SIZES;
     const defaultSizeStock: Record<string, number> = {};
     defaultSizes.forEach(sz => { defaultSizeStock[sz] = 0; });
     setSizeStockMap(defaultSizeStock);
@@ -86,7 +88,7 @@ export const AdminInventory: React.FC = () => {
     setEditingProductId(product.id);
     setCode(product.code || '');
     setName(product.name);
-    setCategory(product.category || 'Casual');
+    setCategory(product.category || '');
     setProductType(product.type || 'Sandals');
     setPrice(product.price);
     setWholesalePrice(product.wholesalePrice || 0);
@@ -105,7 +107,7 @@ export const AdminInventory: React.FC = () => {
       : migrateSizeStock(product);
     setSizeStockMap(prodSizeStock);
     setStock(computeTotalStock(prodSizeStock));
-    setSizes(product.sizes && product.sizes.length > 0 ? product.sizes : ['6', '7', '8', '9', '10', '11']);
+    setSizes(product.sizes && product.sizes.length > 0 ? product.sizes : STANDARD_SIZES);
     setNewSizeInput('');
     setColors(product.colors || []);
     setIsModalOpen(true);
@@ -196,7 +198,7 @@ export const AdminInventory: React.FC = () => {
     const finalDisc = !isNaN(numDisc) ? Math.max(0, Math.round(numDisc * 100) / 100) : 0;
 
     // Build final sizeStock - ensure all selected sizes are present
-    const finalSizes = sizes.length > 0 ? sizes : ['6', '7', '8', '9', '10', '11'];
+    const finalSizes = sizes.length > 0 ? sizes : STANDARD_SIZES;
     const finalSizeStock: Record<string, number> = {};
     finalSizes.forEach(sz => {
       finalSizeStock[sz] = Math.max(0, sizeStockMap[sz] || 0);
@@ -207,7 +209,7 @@ export const AdminInventory: React.FC = () => {
       id: editingProductId || 'prod-' + Date.now(),
       code: code ? code.trim() : `UMA-FT-${Math.floor(10 + Math.random() * 90)}`,
       name: name.trim(),
-      category: category ? category.trim() : 'Footwear',
+      category: category ? category.trim() : '',
       type: productType || 'Sandals',
       sizes: finalSizes,
       colors: colors.length > 0 ? colors : [{ name: 'Standard' }],
@@ -864,21 +866,83 @@ export const AdminInventory: React.FC = () => {
 
               {/* Sizes Selector */}
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
                   <label className="block text-xs font-bold text-[#1E1B4B] uppercase">Sizes Available (UK/IND)</label>
-                  <span className="text-[11px] text-[#64748B]">Click to toggle quick sizes</span>
+                  <div className="flex items-center space-x-1.5 text-[11px]">
+                    <span className="text-[#64748B] hidden sm:inline text-[10px]">Presets:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSizes(STANDARD_SIZES);
+                        setSizeStockMap(prev => {
+                          const updated = { ...prev };
+                          STANDARD_SIZES.forEach(s => { if (updated[s] === undefined) updated[s] = 0; });
+                          return updated;
+                        });
+                      }}
+                      className="text-[#6D5DFB] hover:underline font-bold"
+                    >
+                      All (1-12)
+                    </button>
+                    <span className="text-[#CBD5E1]">·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const adults = ['6', '7', '8', '9', '10', '11', '12'];
+                        setSizes(adults);
+                        setSizeStockMap(prev => {
+                          const updated: Record<string, number> = {};
+                          adults.forEach(s => { updated[s] = prev[s] ?? 0; });
+                          setStock(computeTotalStock(updated));
+                          return updated;
+                        });
+                      }}
+                      className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
+                    >
+                      6-12
+                    </button>
+                    <span className="text-[#CBD5E1]">·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const kids = ['1', '2', '3', '4', '5'];
+                        setSizes(kids);
+                        setSizeStockMap(prev => {
+                          const updated: Record<string, number> = {};
+                          kids.forEach(s => { updated[s] = prev[s] ?? 0; });
+                          setStock(computeTotalStock(updated));
+                          return updated;
+                        });
+                      }}
+                      className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
+                    >
+                      1-5
+                    </button>
+                    <span className="text-[#CBD5E1]">·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSizes([]);
+                        setSizeStockMap({});
+                        setStock(0);
+                      }}
+                      className="text-red-500 hover:text-red-700 font-medium"
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
                 
-                {/* Standard size pills toggle */}
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {['5', '6', '7', '8', '9', '10', '11', '12'].map((sz) => {
+                {/* Standard size pills toggle (1 to 12) */}
+                <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5 mb-2">
+                  {STANDARD_SIZES.map((sz) => {
                     const isSelected = sizes.includes(sz);
                     return (
                       <button
                         key={sz}
                         type="button"
                         onClick={() => handleToggleSize(sz)}
-                        className={`w-9 h-8 rounded-lg text-xs font-bold transition flex items-center justify-center ${
+                        className={`h-8 rounded-lg text-xs font-bold transition flex items-center justify-center ${
                           isSelected
                             ? 'bg-[#6D5DFB] text-white shadow-sm ring-2 ring-[#EEEBFF]'
                             : 'bg-[#F7F8FC] text-[#64748B] hover:text-[#1E1B4B] border border-[#E7E5EF]'
@@ -889,6 +953,28 @@ export const AdminInventory: React.FC = () => {
                     );
                   })}
                 </div>
+
+                {/* Custom extra sizes if added */}
+                {sizes.filter(sz => !STANDARD_SIZES.includes(sz)).length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                    <span className="text-[11px] text-[#64748B] font-medium mr-1">Custom:</span>
+                    {sizes.filter(sz => !STANDARD_SIZES.includes(sz)).map(sz => (
+                      <span
+                        key={sz}
+                        className="inline-flex items-center space-x-1 px-2 py-0.5 bg-[#EEEBFF] text-[#6D5DFB] border border-[#DDD6FE] text-xs rounded-lg font-bold"
+                      >
+                        <span>{sz}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSize(sz)}
+                          className="text-[#6D5DFB] hover:text-red-600 transition"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {/* Custom size input */}
                 <div className="flex items-center space-x-2">
@@ -1100,7 +1186,7 @@ export const AdminInventory: React.FC = () => {
                   </span>
                 </div>
                 {sizes.length > 0 ? (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
                     {sizes.map(sz => (
                       <div key={sz} className="flex flex-col">
                         <label className="text-[10px] font-bold text-emerald-700 mb-0.5 text-center">Size {sz}</label>
