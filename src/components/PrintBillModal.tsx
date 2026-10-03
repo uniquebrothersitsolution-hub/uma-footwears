@@ -92,10 +92,10 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                     ? 'bg-white text-[#6D5DFB] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1E1B4B]'
                 }`}
-                title="50mm Mini Portable / Bluetooth Thermal Receipt"
+                title="58mm Mini Portable / Bluetooth Thermal Receipt"
               >
                 <Receipt className="w-3.5 h-3.5" />
-                <span>50mm</span>
+                <span>58mm</span>
               </button>
               <button
                 type="button"
@@ -279,10 +279,10 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               </div>
             </div>
           ) : format === 'thermal-50' ? (
-            /* THERMAL 50MM PREVIEW */
+            /* THERMAL 58MM PREVIEW */
             <div
               id="print-bill-root"
-              className="format-50mm bg-white text-black p-3 rounded-lg shadow-md font-sans text-[10px] space-y-2.5 max-w-[240px] mx-auto border border-gray-200"
+              className="format-58mm bg-white text-black p-3 rounded-lg shadow-md font-sans text-[10px] space-y-2.5 max-w-[240px] mx-auto border border-gray-200"
             >
               {/* Receipt Header */}
               <div className="text-center space-y-0.5 pb-2 border-b border-dashed border-gray-400">
@@ -417,7 +417,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
               <div className="text-center text-[7.5px] text-gray-500 pt-1.5 border-t border-dashed border-gray-300 leading-tight">
                 <p>{shopSettings.footerMessage || 'Thank you! Goods once sold can be exchanged within 7 days.'}</p>
                 <p className="font-bold uppercase tracking-wider text-gray-700 mt-0.5">*** THANK YOU ***</p>
-                <p className="text-[7px] text-gray-400 font-mono">50mm Mini Thermal</p>
+                <p className="text-[7px] text-gray-400 font-mono">58mm Mini Thermal</p>
               </div>
             </div>
           ) : format === 'upi-qr' ? (
@@ -615,7 +615,7 @@ export const PrintBillModal: React.FC<PrintBillModalProps> = ({ transaction, onC
                 : format === 'upi-qr'
                 ? 'Print Receipt (with QR)'
                 : format === 'thermal-50'
-                ? 'Print Bill (50mm Thermal)'
+                ? 'Print Bill (58mm Thermal)'
                 : format === 'thermal'
                 ? 'Print Bill (80mm Thermal)'
                 : 'Print Bill (Standard A4)'}

@@ -329,8 +329,8 @@ export const PrintService = {
   },
 
   /**
-   * Generates clean 50mm (2-inch) mini POS thermal receipt HTML
-   * Optimized specifically for 50mm / 58mm portable Bluetooth and desktop thermal printers
+   * Generates clean 58mm mini POS thermal receipt HTML
+   * Optimized specifically for 58mm portable Bluetooth and desktop thermal printers
    */
   generateThermal50Html(transaction: SaleTransaction, settings: ShopSettings): string {
     const formattedDate = new Date(transaction.timestamp).toLocaleString('en-IN', {
@@ -352,7 +352,7 @@ export const PrintService = {
   <title>Receipt #${transaction.billNo}</title>
   <style>
     @page {
-      size: 50mm auto;
+      size: 58mm auto;
       margin: 1mm 1.5mm;
     }
     * {
@@ -1106,7 +1106,7 @@ export const PrintService = {
       iframe.style.position = 'fixed';
       iframe.style.top = '-10000px';
       iframe.style.left = '-10000px';
-      iframe.style.width = format === 'a4' ? '210mm' : (format === 'thermal-50' ? '50mm' : '80mm');
+      iframe.style.width = format === 'a4' ? '210mm' : (format === 'thermal-50' ? '58mm' : '80mm');
       iframe.style.height = '1000px';
       iframe.style.border = 'none';
 
