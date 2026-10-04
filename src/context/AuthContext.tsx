@@ -7,7 +7,7 @@ interface AuthContextType {
   username: string;
   theme: 'light' | 'dark';
   toggleTheme: () => void;
-  login: (role: UserRole, user: string, pass: string) => { success: boolean; message?: string };
+  login: (role: UserRole, user: string, pass: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
   shopSettings: ShopSettings;
   updateSettings: (newSettings: ShopSettings) => void;
@@ -60,7 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
-  const login = (role: UserRole, user: string, pass: string) => {
+  const login = async (role: UserRole, user: string, pass: string): Promise<{ success: boolean; message?: string }> => {
     const cleanUser = user.trim().toLowerCase();
     const cleanPass = pass.trim();
 
@@ -71,10 +71,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    const accounts = StorageService.getAccounts();
-    const account = accounts.find(
+    let accounts = StorageService.getAccounts();
+    let account = accounts.find(
       a => a.role === role && a.username.trim().toLowerCase() === cleanUser
     );
+
+    // If account not found locally or password mismatch, fetch latest from cloud in case credentials were changed on another device!
+    if (!account || account.password !== cleanPass) {
+      try {
+        accounts = await StorageService.fetchAccountsFromCloud();
+        account = accounts.find(
+          a => a.role === role && a.username.trim().toLowerCase() === cleanUser
+        );
+      } catch (err) {
+        console.warn('Could not refresh accounts from cloud during login:', err);
+      }
+    }
 
     if (!account) {
       return { success: false, message: 'Invalid username for selected role.' };

@@ -19,7 +19,9 @@ export const LoginModal: React.FC = () => {
     setPasswordInput('');
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     if (!usernameInput.trim() || !passwordInput.trim()) {
@@ -27,9 +29,14 @@ export const LoginModal: React.FC = () => {
       return;
     }
 
-    const res = login(selectedRole, usernameInput.trim(), passwordInput.trim());
-    if (!res.success) {
-      setErrorMessage(res.message || 'Login failed. Please check your credentials.');
+    setIsLoggingIn(true);
+    try {
+      const res = await login(selectedRole, usernameInput.trim(), passwordInput.trim());
+      if (!res.success) {
+        setErrorMessage(res.message || 'Login failed. Please check your credentials.');
+      }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -130,10 +137,17 @@ export const LoginModal: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full py-3.5 px-4 bg-[#6D5DFB] hover:bg-[#5B4AE8] text-white font-semibold text-sm rounded-xl shadow-sm flex items-center justify-center space-x-2 transition"
+            disabled={isLoggingIn}
+            className="w-full py-3.5 px-4 bg-[#6D5DFB] hover:bg-[#5B4AE8] disabled:opacity-60 text-white font-semibold text-sm rounded-xl shadow-sm flex items-center justify-center space-x-2 transition"
           >
-            <span>Login to {selectedRole === 'admin' ? 'Admin Panel' : 'Staff Billing'}</span>
-            <ArrowRight className="w-4 h-4" />
+            {isLoggingIn ? (
+              <span>Authenticating...</span>
+            ) : (
+              <>
+                <span>Login to {selectedRole === 'admin' ? 'Admin Panel' : 'Staff Billing'}</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </button>
         </form>
 

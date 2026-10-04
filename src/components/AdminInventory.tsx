@@ -334,7 +334,7 @@ export const AdminInventory: React.FC = () => {
     showToast(`Moved "${movedItem.name}" to position #${targetIndex + 1}`);
   };
 
-  const handleQuickSort = (type: 'code' | 'name' | 'category' | 'price-asc' | 'price-desc' | 'stock-asc' | 'reset') => {
+  const handleQuickSort = (type: 'code' | 'name' | 'name-desc' | 'category' | 'price-asc' | 'price-desc' | 'stock-asc' | 'reset') => {
     let sorted = [...products];
     let label = '';
 
@@ -344,6 +344,9 @@ export const AdminInventory: React.FC = () => {
     } else if (type === 'name') {
       sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       label = 'Product Name (A → Z)';
+    } else if (type === 'name-desc') {
+      sorted.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+      label = 'Product Name (Z → A)';
     } else if (type === 'category') {
       sorted.sort((a, b) => {
         const catComp = (a.category || '').localeCompare(b.category || '');
@@ -489,6 +492,14 @@ export const AdminInventory: React.FC = () => {
               title="Sort alphabetically by product name"
             >
               <span>🔤 Name (A-Z)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickSort('name-desc')}
+              className="px-2.5 py-1.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] hover:text-[#6D5DFB] rounded-xl font-medium transition border border-[#E7E5EF]"
+              title="Sort reverse alphabetically by product name"
+            >
+              <span>🔤 Name (Z-A)</span>
             </button>
             <button
               type="button"

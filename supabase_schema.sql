@@ -83,6 +83,7 @@ create table if not exists public.shop_settings (
   ledger_columns jsonb default '["billNoDate","pNo","articleNo","mrp","soldPrice","brand","type","wholeSalePct","wholeSaleValue","sizeAvailable","payment"]'::jsonb,
   custom_columns jsonb default '[]'::jsonb,
   column_labels jsonb default '{}'::jsonb,
+  accounts jsonb default '[]'::jsonb,
   updated_at timestamptz default now()
 );
 
@@ -90,6 +91,7 @@ create table if not exists public.shop_settings (
 alter table public.shop_settings add column if not exists ledger_columns jsonb default '["billNoDate","pNo","articleNo","mrp","soldPrice","brand","type","wholeSalePct","wholeSaleValue","sizeAvailable","payment"]'::jsonb;
 alter table public.shop_settings add column if not exists custom_columns jsonb default '[]'::jsonb;
 alter table public.shop_settings add column if not exists column_labels jsonb default '{}'::jsonb;
+alter table public.shop_settings add column if not exists accounts jsonb default '[]'::jsonb;
 
 -- Apply the correct column order to any existing row (run this to fix existing deployments)
 UPDATE public.shop_settings

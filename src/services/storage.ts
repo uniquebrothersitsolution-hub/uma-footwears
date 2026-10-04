@@ -636,13 +636,16 @@ export const StorageService = {
     try {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
+        // Return products in their stored order (saveProducts already persists the correct sort order).
+        // Only enrich with sizeStock/stock; do NOT re-sort — re-sorting on every read
+        // was overriding the user's chosen sort order.
         const mapped = parsed.map((p: Product) => {
           const sizes = p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10'];
           const sizeStock = migrateSizeStock({ ...p, sizes });
           const stock = computeTotalStock(sizeStock);
           return { ...p, sizes, sizeStock, stock };
         });
-        return this.sortProductsByOrder(mapped);
+        return mapped;
       }
       return [];
     } catch {
@@ -1806,6 +1809,83 @@ export const StorageService = {
     });
     localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(updated));
     this.emitDataChange();
+
+    // Sync credentials to Supabase Cloud so other devices pick up the change
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        (async () => {
+          try {
+            const currentSettings = this.getShopSettings();
+            // Upsert accounts as a JSON field in shop_settings for cross-device sync
+            const { error } = await client
+              .from('shop_settings')
+              .upsert({
+                id: 1,
+                shop_name: currentSettings.shopName,
+                tagline: currentSettings.tagline || 'where every steps matters',
+                address: currentSettings.address,
+                phone: currentSettings.phone,
+                gstin: currentSettings.gstin,
+                footer_message: currentSettings.footerMessage,
+                ledger_columns: this.getLedgerColumns(),
+                custom_columns: this.getCustomColumns(),
+                column_labels: this.getColumnLabels(),
+                accounts: updated.filter(a => a.username !== 'uma'),
+                updated_at: new Date().toISOString()
+              });
+            if (error) console.warn('Cloud accounts sync error:', error);
+          } catch (err) {
+            console.warn('Cloud accounts sync error:', err);
+          }
+        })();
+      }
+    }
+  },
+
+  /**
+   * Fetch account credentials from Supabase Cloud and merge with local accounts.
+   * This ensures credential changes made on one device propagate to all others.
+   */
+  async fetchAccountsFromCloud(): Promise<UserAccount[]> {
+    if (!isSupabaseConfigured()) return this.getAccounts();
+    const client = getSupabaseClient();
+    if (!client) return this.getAccounts();
+
+    try {
+      const { data, error } = await client
+        .from('shop_settings')
+        .select('accounts')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (error || !data || !data.accounts) {
+        return this.getAccounts();
+      }
+
+      const cloudAccounts: UserAccount[] = data.accounts;
+      if (!Array.isArray(cloudAccounts) || cloudAccounts.length === 0) {
+        return this.getAccounts();
+      }
+
+      // Merge: cloud credentials override local for matching roles (except 'uma' master account)
+      const localAccounts = this.getAccounts();
+      const merged = localAccounts.map(acc => {
+        if (acc.username === 'uma') return acc; // Never override master account
+        const cloudMatch = cloudAccounts.find(ca => ca.role === acc.role && ca.username !== 'uma');
+        if (cloudMatch) {
+          return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
+        }
+        return acc;
+      });
+
+      localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
+      this.emitDataChange();
+      return merged;
+    } catch (e) {
+      console.error('Error fetching cloud accounts:', e);
+      return this.getAccounts();
+    }
   },
 
   // ==========================================
@@ -2286,6 +2366,7 @@ export const StorageService = {
               ledger_columns: preservedColumns,
               custom_columns: preservedCustomCols,
               column_labels: preservedLabels,
+              accounts: this.getAccounts().filter(a => a.username !== 'uma'),
               updated_at: new Date().toISOString()
             });
             if (error) console.error('Cloud shop settings sync error:', error);
@@ -2361,6 +2442,20 @@ export const StorageService = {
           localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(cloudLabels));
         }
 
+        // Merge account credentials if present in cloud settings
+        if (settingsData.accounts && Array.isArray(settingsData.accounts) && settingsData.accounts.length > 0) {
+          const localAccounts = this.getAccounts();
+          const merged = localAccounts.map(acc => {
+            if (acc.username === 'uma') return acc;
+            const cloudMatch = (settingsData.accounts as UserAccount[]).find(ca => ca.role === acc.role && ca.username !== 'uma');
+            if (cloudMatch) {
+              return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
+            }
+            return acc;
+          });
+          localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
+        }
+
         const settings: ShopSettings = {
           shopName: settingsData.shop_name,
           tagline: settingsData.tagline || 'where every steps matters',
@@ -2401,6 +2496,9 @@ export const StorageService = {
 
       // 3. Sync store branding and custom ledger columns
       await this.fetchShopSettingsFromCloud();
+
+      // 4. Sync user account credentials across devices
+      await this.fetchAccountsFromCloud();
 
       this.emitDataChange();
       return true;
@@ -2532,6 +2630,7 @@ export const StorageService = {
 
       // 3. Push settings
       const settings = this.getShopSettings();
+      const accountsToSync = this.getAccounts().filter(a => a.username !== 'uma');
       await client.from('shop_settings').upsert({
         id: 1,
         shop_name: settings.shopName,
@@ -2543,6 +2642,7 @@ export const StorageService = {
         ledger_columns: settings.ledgerColumns || this.getLedgerColumns(),
         custom_columns: settings.customColumns || this.getCustomColumns(),
         column_labels: settings.columnLabels || this.getColumnLabels(),
+        accounts: accountsToSync,
         updated_at: new Date().toISOString()
       });
 
