@@ -1807,18 +1807,10 @@ export const StorageService = {
     const cleanPass = newPassword.trim();
     const accounts = this.getAccounts();
 
-    const exists = accounts.some(acc => acc.role === role && acc.username !== 'uma');
-    let updated: UserAccount[];
-    if (exists) {
-      updated = accounts.map(acc => {
-        if (acc.role === role && acc.username !== 'uma') {
-          return { ...acc, username: cleanUser, password: cleanPass };
-        }
-        return acc;
-      });
-    } else {
-      updated = [...accounts, { role, username: cleanUser, password: cleanPass }];
-    }
+    // Remove ALL non-uma accounts for this role, then add the new one.
+    // This prevents duplicate accounts when a username changes (e.g. 'admin' -> 'DEEPAK').
+    const withoutOldRole = accounts.filter(acc => !(acc.role === role && acc.username !== 'uma'));
+    const updated: UserAccount[] = [...withoutOldRole, { role, username: cleanUser, password: cleanPass }];
 
     localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(updated));
     this.emitDataChange();
@@ -1830,16 +1822,26 @@ export const StorageService = {
         try {
           const accountsToSync = updated.filter(a => a.username !== 'uma');
 
-          // 1. Universal persistence: Save to SYSTEM_CONFIG row (id: 999)
-          // Uses standard text columns guaranteed to exist on any Supabase instance
+          // 1. First, read the existing SYSTEM_CONFIG row to preserve non-account fields
+          let existingConfig: Record<string, any> = {};
+          try {
+            const { data: sysRow } = await client
+              .from('shop_settings')
+              .select('tagline')
+              .eq('id', SYSTEM_CONFIG_ROW_ID)
+              .maybeSingle();
+            if (sysRow?.tagline) {
+              try { existingConfig = JSON.parse(sysRow.tagline); } catch { existingConfig = {}; }
+            }
+          } catch { /* ignore */ }
+
+          // 2. Merge: only overwrite the accounts field, preserve ledgerColumns/customColumns/columnLabels
           const configPayload = {
             id: SYSTEM_CONFIG_ROW_ID,
             shop_name: 'SYSTEM_CONFIG',
             tagline: JSON.stringify({
+              ...existingConfig,
               accounts: accountsToSync,
-              ledgerColumns: this.getLedgerColumns(),
-              customColumns: this.getCustomColumns(),
-              columnLabels: this.getColumnLabels(),
               updatedAt: new Date().toISOString()
             }),
             address: 'System Config Row',
@@ -1857,7 +1859,7 @@ export const StorageService = {
             console.error('System config row sync error:', configError);
           }
 
-          // 2. Also attempt updating native accounts column on id: 1 (if schema migration was run)
+          // 3. Also update native accounts column on id: 1 (if schema has the column)
           try {
             await client
               .from('shop_settings')
@@ -1935,23 +1937,25 @@ export const StorageService = {
         return this.getAccounts();
       }
 
-      // Merge: cloud credentials override local for matching roles (except 'uma' master account)
+      // Merge: cloud credentials completely replace local for each role (except 'uma' master account)
+      // This ensures username changes (e.g. 'admin' -> 'DEEPAK') propagate correctly without duplicates
       const localAccounts = this.getAccounts();
-      const merged = localAccounts.map(acc => {
-        if (acc.username === 'uma') return acc; // Never override master account
-        const cloudMatch = cloudAccounts!.find(ca => ca.role === acc.role && ca.username !== 'uma');
-        if (cloudMatch) {
-          return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
-        }
-        return acc;
-      });
 
-      // Add any non-uma account from cloud that wasn't in local accounts
-      for (const ca of cloudAccounts) {
-        if (ca.username !== 'uma') {
-          const exists = merged.some(acc => acc.role === ca.role && acc.username.toLowerCase() === ca.username.toLowerCase());
-          if (!exists) {
-            merged.push(ca);
+      // Start with uma master accounts (never overwritten)
+      const merged: UserAccount[] = localAccounts.filter(acc => acc.username === 'uma');
+
+      // For each role, cloud takes priority over local
+      const roles: Array<'admin' | 'staff'> = ['admin', 'staff'];
+      for (const role of roles) {
+        const cloudForRole = cloudAccounts.find(ca => ca.role === role && ca.username !== 'uma');
+        if (cloudForRole) {
+          // Cloud has this role — use cloud credentials (replaces any local account for this role)
+          merged.push({ role, username: cloudForRole.username, password: cloudForRole.password });
+        } else {
+          // Cloud doesn't have this role — keep local if it exists
+          const localForRole = localAccounts.find(acc => acc.role === role && acc.username !== 'uma');
+          if (localForRole) {
+            merged.push(localForRole);
           }
         }
       }
@@ -2432,7 +2436,16 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const accountsToSync = this.getAccounts().filter(a => a.username !== 'uma');
+            // CRITICAL: Fetch the latest accounts from cloud FIRST before writing to SYSTEM_CONFIG.
+            // This prevents overwriting credential changes made on other devices with stale local data.
+            let accountsToSync: UserAccount[];
+            try {
+              const freshAccounts = await this.fetchAccountsFromCloud();
+              accountsToSync = freshAccounts.filter(a => a.username !== 'uma');
+            } catch {
+              // If cloud fetch fails, fall back to local accounts
+              accountsToSync = this.getAccounts().filter(a => a.username !== 'uma');
+            }
 
             // 1. Base payload for row 1 (guaranteed to succeed on all schemas)
             const basePayload = {
@@ -2463,11 +2476,29 @@ export const StorageService = {
             }
 
             // 2. Always persist extended settings & credentials to SYSTEM_CONFIG row (id: 999)
+            // Read existing config first to preserve any fields we're not updating
+            let existingConfig: Record<string, any> = {};
+            try {
+              const { data: sysRow } = await client
+                .from('shop_settings')
+                .select('tagline')
+                .eq('id', SYSTEM_CONFIG_ROW_ID)
+                .maybeSingle();
+              if (sysRow?.tagline) {
+                try { existingConfig = JSON.parse(sysRow.tagline); } catch { existingConfig = {}; }
+              }
+            } catch { /* ignore */ }
+
+            // Use cloud accounts if they exist, otherwise use what we have
+            const finalAccounts = (existingConfig.accounts && Array.isArray(existingConfig.accounts) && existingConfig.accounts.length > 0)
+              ? existingConfig.accounts
+              : accountsToSync;
+
             await client.from('shop_settings').upsert({
               id: SYSTEM_CONFIG_ROW_ID,
               shop_name: 'SYSTEM_CONFIG',
               tagline: JSON.stringify({
-                accounts: accountsToSync,
+                accounts: finalAccounts,
                 ledgerColumns: preservedColumns,
                 customColumns: preservedCustomCols,
                 columnLabels: preservedLabels,
@@ -2575,20 +2606,21 @@ export const StorageService = {
       }
 
       // Merge account credentials if present in cloud settings or system config
+      // Use role-based replacement to prevent duplicates when usernames change
       if (cloudAccounts && Array.isArray(cloudAccounts) && cloudAccounts.length > 0) {
         const localAccounts = this.getAccounts();
-        const merged = localAccounts.map(acc => {
-          if (acc.username === 'uma') return acc;
-          const cloudMatch = (cloudAccounts as UserAccount[]).find(ca => ca.role === acc.role && ca.username !== 'uma');
-          if (cloudMatch) {
-            return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
-          }
-          return acc;
-        });
-        for (const ca of cloudAccounts) {
-          if (ca.username !== 'uma') {
-            const exists = merged.some(acc => acc.role === ca.role && acc.username.toLowerCase() === ca.username.toLowerCase());
-            if (!exists) merged.push(ca);
+        // Start with uma master accounts (never overwritten)
+        const merged: UserAccount[] = localAccounts.filter(acc => acc.username === 'uma');
+
+        // For each role, cloud takes priority over local
+        const roles: Array<'admin' | 'staff'> = ['admin', 'staff'];
+        for (const role of roles) {
+          const cloudForRole = (cloudAccounts as UserAccount[]).find(ca => ca.role === role && ca.username !== 'uma');
+          if (cloudForRole) {
+            merged.push({ role, username: cloudForRole.username, password: cloudForRole.password });
+          } else {
+            const localForRole = localAccounts.find(acc => acc.role === role && acc.username !== 'uma');
+            if (localForRole) merged.push(localForRole);
           }
         }
         localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
