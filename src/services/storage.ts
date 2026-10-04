@@ -15,6 +15,9 @@ const STORAGE_KEYS = {
   DELETED_BILLS: 'uma_footwears_deleted_bills',
 };
 
+// Dedicated Supabase row ID in shop_settings for syncing credentials & custom config across all devices
+export const SYSTEM_CONFIG_ROW_ID = 999;
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function toValidUuidOrNull(val?: string | null): string | null {
   if (typeof val === 'string' && UUID_REGEX.test(val)) return val;
@@ -1799,48 +1802,82 @@ export const StorageService = {
     }
   },
 
-  updateAccountCredentials(role: 'admin' | 'staff', newUsername: string, newPassword: string): void {
+  async updateAccountCredentials(role: 'admin' | 'staff', newUsername: string, newPassword: string): Promise<boolean> {
+    const cleanUser = newUsername.trim();
+    const cleanPass = newPassword.trim();
     const accounts = this.getAccounts();
-    const updated = accounts.map(acc => {
-      if (acc.role === role && acc.username !== 'uma') {
-        return { ...acc, username: newUsername, password: newPassword };
-      }
-      return acc;
-    });
+
+    const exists = accounts.some(acc => acc.role === role && acc.username !== 'uma');
+    let updated: UserAccount[];
+    if (exists) {
+      updated = accounts.map(acc => {
+        if (acc.role === role && acc.username !== 'uma') {
+          return { ...acc, username: cleanUser, password: cleanPass };
+        }
+        return acc;
+      });
+    } else {
+      updated = [...accounts, { role, username: cleanUser, password: cleanPass }];
+    }
+
     localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(updated));
     this.emitDataChange();
 
-    // Sync credentials to Supabase Cloud so other devices pick up the change
+    // Sync credentials to Supabase Cloud so all other devices pick up the change
     if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
-        (async () => {
-          try {
-            const currentSettings = this.getShopSettings();
-            // Upsert accounts as a JSON field in shop_settings for cross-device sync
-            const { error } = await client
-              .from('shop_settings')
-              .upsert({
-                id: 1,
-                shop_name: currentSettings.shopName,
-                tagline: currentSettings.tagline || 'where every steps matters',
-                address: currentSettings.address,
-                phone: currentSettings.phone,
-                gstin: currentSettings.gstin,
-                footer_message: currentSettings.footerMessage,
-                ledger_columns: this.getLedgerColumns(),
-                custom_columns: this.getCustomColumns(),
-                column_labels: this.getColumnLabels(),
-                accounts: updated.filter(a => a.username !== 'uma'),
-                updated_at: new Date().toISOString()
-              });
-            if (error) console.warn('Cloud accounts sync error:', error);
-          } catch (err) {
-            console.warn('Cloud accounts sync error:', err);
+        try {
+          const accountsToSync = updated.filter(a => a.username !== 'uma');
+
+          // 1. Universal persistence: Save to SYSTEM_CONFIG row (id: 999)
+          // Uses standard text columns guaranteed to exist on any Supabase instance
+          const configPayload = {
+            id: SYSTEM_CONFIG_ROW_ID,
+            shop_name: 'SYSTEM_CONFIG',
+            tagline: JSON.stringify({
+              accounts: accountsToSync,
+              ledgerColumns: this.getLedgerColumns(),
+              customColumns: this.getCustomColumns(),
+              columnLabels: this.getColumnLabels(),
+              updatedAt: new Date().toISOString()
+            }),
+            address: 'System Config Row',
+            phone: '',
+            gstin: '',
+            footer_message: 'Syncs credentials & custom configuration across all devices',
+            updated_at: new Date().toISOString()
+          };
+
+          const { error: configError } = await client
+            .from('shop_settings')
+            .upsert(configPayload);
+
+          if (configError) {
+            console.error('System config row sync error:', configError);
           }
-        })();
+
+          // 2. Also attempt updating native accounts column on id: 1 (if schema migration was run)
+          try {
+            await client
+              .from('shop_settings')
+              .update({
+                accounts: accountsToSync,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', 1);
+          } catch {
+            // Silently ignore if column doesn't exist on id: 1
+          }
+
+          return !configError;
+        } catch (err) {
+          console.error('Cloud accounts sync error:', err);
+          return false;
+        }
       }
     }
+    return true;
   },
 
   /**
@@ -1853,18 +1890,48 @@ export const StorageService = {
     if (!client) return this.getAccounts();
 
     try {
-      const { data, error } = await client
-        .from('shop_settings')
-        .select('accounts')
-        .eq('id', 1)
-        .maybeSingle();
+      let cloudAccounts: UserAccount[] | null = null;
 
-      if (error || !data || !data.accounts) {
-        return this.getAccounts();
+      // 1. Universal persistence: Try reading from SYSTEM_CONFIG row (id: 999)
+      try {
+        const { data: sysConfig, error: sysError } = await client
+          .from('shop_settings')
+          .select('tagline')
+          .eq('id', SYSTEM_CONFIG_ROW_ID)
+          .maybeSingle();
+
+        if (!sysError && sysConfig?.tagline) {
+          try {
+            const parsed = JSON.parse(sysConfig.tagline);
+            if (parsed && Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
+              cloudAccounts = parsed.accounts;
+            }
+          } catch (e) {
+            console.warn('Could not parse sysConfig accounts JSON:', e);
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading system config row:', err);
       }
 
-      const cloudAccounts: UserAccount[] = data.accounts;
-      if (!Array.isArray(cloudAccounts) || cloudAccounts.length === 0) {
+      // 2. Also check row id: 1 for native accounts column (if migration was run)
+      if (!cloudAccounts) {
+        try {
+          const { data, error } = await client
+            .from('shop_settings')
+            .select('accounts')
+            .eq('id', 1)
+            .maybeSingle();
+
+          if (!error && data?.accounts && Array.isArray(data.accounts) && data.accounts.length > 0) {
+            cloudAccounts = data.accounts;
+          }
+        } catch {
+          // Native column not in schema, safe to ignore
+        }
+      }
+
+      if (!cloudAccounts || !Array.isArray(cloudAccounts) || cloudAccounts.length === 0) {
         return this.getAccounts();
       }
 
@@ -1872,12 +1939,22 @@ export const StorageService = {
       const localAccounts = this.getAccounts();
       const merged = localAccounts.map(acc => {
         if (acc.username === 'uma') return acc; // Never override master account
-        const cloudMatch = cloudAccounts.find(ca => ca.role === acc.role && ca.username !== 'uma');
+        const cloudMatch = cloudAccounts!.find(ca => ca.role === acc.role && ca.username !== 'uma');
         if (cloudMatch) {
           return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
         }
         return acc;
       });
+
+      // Add any non-uma account from cloud that wasn't in local accounts
+      for (const ca of cloudAccounts) {
+        if (ca.username !== 'uma') {
+          const exists = merged.some(acc => acc.role === ca.role && acc.username.toLowerCase() === ca.username.toLowerCase());
+          if (!exists) {
+            merged.push(ca);
+          }
+        }
+      }
 
       localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
       this.emitDataChange();
@@ -2355,7 +2432,10 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const { error } = await client.from('shop_settings').upsert({
+            const accountsToSync = this.getAccounts().filter(a => a.username !== 'uma');
+
+            // 1. Base payload for row 1 (guaranteed to succeed on all schemas)
+            const basePayload = {
               id: 1,
               shop_name: mergedSettings.shopName,
               tagline: mergedSettings.tagline || 'where every steps matters',
@@ -2363,13 +2443,42 @@ export const StorageService = {
               phone: mergedSettings.phone,
               gstin: mergedSettings.gstin,
               footer_message: mergedSettings.footerMessage,
+              updated_at: new Date().toISOString()
+            };
+
+            // Attempt full payload first if database schema has extended columns
+            const fullPayload = {
+              ...basePayload,
               ledger_columns: preservedColumns,
               custom_columns: preservedCustomCols,
               column_labels: preservedLabels,
-              accounts: this.getAccounts().filter(a => a.username !== 'uma'),
+              accounts: accountsToSync
+            };
+
+            const { error: fullError } = await client.from('shop_settings').upsert(fullPayload);
+            if (fullError) {
+              // Fall back to base columns for row 1 if extended columns don't exist
+              const { error: baseError } = await client.from('shop_settings').upsert(basePayload);
+              if (baseError) console.error('Cloud shop settings sync error:', baseError);
+            }
+
+            // 2. Always persist extended settings & credentials to SYSTEM_CONFIG row (id: 999)
+            await client.from('shop_settings').upsert({
+              id: SYSTEM_CONFIG_ROW_ID,
+              shop_name: 'SYSTEM_CONFIG',
+              tagline: JSON.stringify({
+                accounts: accountsToSync,
+                ledgerColumns: preservedColumns,
+                customColumns: preservedCustomCols,
+                columnLabels: preservedLabels,
+                updatedAt: new Date().toISOString()
+              }),
+              address: 'System Config Row',
+              phone: '',
+              gstin: '',
+              footer_message: 'Syncs credentials & custom configuration across all devices',
               updated_at: new Date().toISOString()
             });
-            if (error) console.error('Cloud shop settings sync error:', error);
           } catch (err) {
             console.error('Cloud shop settings sync error:', err);
           }
@@ -2391,6 +2500,7 @@ export const StorageService = {
     if (!client) return this.getShopSettings();
 
     try {
+      // 1. Fetch store branding from id: 1
       const { data: settingsData, error } = await client
         .from('shop_settings')
         .select('*')
@@ -2399,63 +2509,92 @@ export const StorageService = {
 
       if (error) {
         console.warn('Error fetching cloud shop settings:', error);
-        return this.getShopSettings();
+      }
+
+      // 2. Read extended configuration from SYSTEM_CONFIG row (id: 999)
+      let sysConfigAccounts: UserAccount[] | undefined;
+      let sysConfigLedgerCols: string[] | undefined;
+      let sysConfigCustomCols: LedgerColumnConfig[] | undefined;
+      let sysConfigColumnLabels: Record<string, string> | undefined;
+
+      try {
+        const { data: sysConfig } = await client
+          .from('shop_settings')
+          .select('tagline')
+          .eq('id', SYSTEM_CONFIG_ROW_ID)
+          .maybeSingle();
+
+        if (sysConfig?.tagline) {
+          const parsed = JSON.parse(sysConfig.tagline);
+          if (parsed) {
+            if (Array.isArray(parsed.accounts)) sysConfigAccounts = parsed.accounts;
+            if (Array.isArray(parsed.ledgerColumns)) sysConfigLedgerCols = parsed.ledgerColumns;
+            if (Array.isArray(parsed.customColumns)) sysConfigCustomCols = parsed.customColumns;
+            if (parsed.columnLabels && typeof parsed.columnLabels === 'object') sysConfigColumnLabels = parsed.columnLabels;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not read sysConfig row in fetchShopSettingsFromCloud:', err);
+      }
+
+      const rawCols = settingsData?.ledger_columns || sysConfigLedgerCols;
+      let cloudCols = Array.isArray(rawCols) && rawCols.length > 0
+        ? [...rawCols]
+        : undefined;
+
+      const cloudCustomCols = (Array.isArray(settingsData?.custom_columns) ? settingsData.custom_columns : undefined) || sysConfigCustomCols;
+      const cloudLabels = (settingsData?.column_labels && typeof settingsData.column_labels === 'object' ? settingsData.column_labels : undefined) || sysConfigColumnLabels;
+      const cloudAccounts = (Array.isArray(settingsData?.accounts) ? settingsData.accounts : undefined) || sysConfigAccounts;
+
+      if (cloudCols) {
+        // Guarantee 'soldPrice', 'type' and 'payment' in cloud columns if not explicitly deleted
+        const labels = cloudLabels || this.getColumnLabels();
+        if (!cloudCols.includes('soldPrice') && labels['__deleted_soldPrice'] !== 'true') {
+          const mrpIdx = cloudCols.indexOf('mrp');
+          if (mrpIdx !== -1) cloudCols.splice(mrpIdx + 1, 0, 'soldPrice');
+          else cloudCols.push('soldPrice');
+        }
+        if (!cloudCols.includes('type') && labels['__deleted_type'] !== 'true') {
+          const brandIdx = cloudCols.indexOf('brand');
+          if (brandIdx !== -1) cloudCols.splice(brandIdx + 1, 0, 'type');
+          else cloudCols.push('type');
+        }
+        if (!cloudCols.includes('payment') && labels['__deleted_payment'] !== 'true') {
+          const sizeIdx = cloudCols.indexOf('sizeAvailable');
+          if (sizeIdx !== -1) cloudCols.splice(sizeIdx + 1, 0, 'payment');
+          else cloudCols.push('payment');
+        }
+        localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(cloudCols));
+      }
+
+      if (cloudCustomCols) {
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(cloudCustomCols));
+      }
+      if (cloudLabels) {
+        localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(cloudLabels));
+      }
+
+      // Merge account credentials if present in cloud settings or system config
+      if (cloudAccounts && Array.isArray(cloudAccounts) && cloudAccounts.length > 0) {
+        const localAccounts = this.getAccounts();
+        const merged = localAccounts.map(acc => {
+          if (acc.username === 'uma') return acc;
+          const cloudMatch = (cloudAccounts as UserAccount[]).find(ca => ca.role === acc.role && ca.username !== 'uma');
+          if (cloudMatch) {
+            return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
+          }
+          return acc;
+        });
+        for (const ca of cloudAccounts) {
+          if (ca.username !== 'uma') {
+            const exists = merged.some(acc => acc.role === ca.role && acc.username.toLowerCase() === ca.username.toLowerCase());
+            if (!exists) merged.push(ca);
+          }
+        }
+        localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
       }
 
       if (settingsData) {
-        let cloudCols = Array.isArray(settingsData.ledger_columns) && settingsData.ledger_columns.length > 0
-          ? [...settingsData.ledger_columns]
-          : undefined;
-
-        const cloudCustomCols = Array.isArray(settingsData.custom_columns)
-          ? settingsData.custom_columns
-          : undefined;
-
-        const cloudLabels = settingsData.column_labels && typeof settingsData.column_labels === 'object'
-          ? settingsData.column_labels
-          : undefined;
-
-        if (cloudCols) {
-          // Guarantee 'soldPrice', 'type' and 'payment' in cloud columns if not explicitly deleted
-          const labels = cloudLabels || this.getColumnLabels();
-          if (!cloudCols.includes('soldPrice') && labels['__deleted_soldPrice'] !== 'true') {
-            const mrpIdx = cloudCols.indexOf('mrp');
-            if (mrpIdx !== -1) cloudCols.splice(mrpIdx + 1, 0, 'soldPrice');
-            else cloudCols.push('soldPrice');
-          }
-          if (!cloudCols.includes('type') && labels['__deleted_type'] !== 'true') {
-            const brandIdx = cloudCols.indexOf('brand');
-            if (brandIdx !== -1) cloudCols.splice(brandIdx + 1, 0, 'type');
-            else cloudCols.push('type');
-          }
-          if (!cloudCols.includes('payment') && labels['__deleted_payment'] !== 'true') {
-            const sizeIdx = cloudCols.indexOf('sizeAvailable');
-            if (sizeIdx !== -1) cloudCols.splice(sizeIdx + 1, 0, 'payment');
-            else cloudCols.push('payment');
-          }
-          localStorage.setItem(STORAGE_KEYS.LEDGER_COLUMNS, JSON.stringify(cloudCols));
-        }
-        if (cloudCustomCols) {
-          localStorage.setItem(STORAGE_KEYS.CUSTOM_COLUMNS, JSON.stringify(cloudCustomCols));
-        }
-        if (cloudLabels) {
-          localStorage.setItem(STORAGE_KEYS.COLUMN_LABELS, JSON.stringify(cloudLabels));
-        }
-
-        // Merge account credentials if present in cloud settings
-        if (settingsData.accounts && Array.isArray(settingsData.accounts) && settingsData.accounts.length > 0) {
-          const localAccounts = this.getAccounts();
-          const merged = localAccounts.map(acc => {
-            if (acc.username === 'uma') return acc;
-            const cloudMatch = (settingsData.accounts as UserAccount[]).find(ca => ca.role === acc.role && ca.username !== 'uma');
-            if (cloudMatch) {
-              return { ...acc, username: cloudMatch.username, password: cloudMatch.password };
-            }
-            return acc;
-          });
-          localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(merged));
-        }
-
         const settings: ShopSettings = {
           shopName: settingsData.shop_name,
           tagline: settingsData.tagline || 'where every steps matters',
@@ -2471,6 +2610,7 @@ export const StorageService = {
         this.emitDataChange();
         return settings;
       }
+
       return this.getShopSettings();
     } catch (e) {
       console.error('Failed to fetch cloud shop settings:', e);
@@ -2631,7 +2771,8 @@ export const StorageService = {
       // 3. Push settings
       const settings = this.getShopSettings();
       const accountsToSync = this.getAccounts().filter(a => a.username !== 'uma');
-      await client.from('shop_settings').upsert({
+      
+      const baseSettingsPayload = {
         id: 1,
         shop_name: settings.shopName,
         tagline: settings.tagline || 'where every steps matters',
@@ -2639,10 +2780,36 @@ export const StorageService = {
         phone: settings.phone,
         gstin: settings.gstin,
         footer_message: settings.footerMessage,
+        updated_at: new Date().toISOString()
+      };
+
+      const fullSettingsPayload = {
+        ...baseSettingsPayload,
         ledger_columns: settings.ledgerColumns || this.getLedgerColumns(),
         custom_columns: settings.customColumns || this.getCustomColumns(),
         column_labels: settings.columnLabels || this.getColumnLabels(),
-        accounts: accountsToSync,
+        accounts: accountsToSync
+      };
+
+      const { error: fullSettingsError } = await client.from('shop_settings').upsert(fullSettingsPayload);
+      if (fullSettingsError) {
+        await client.from('shop_settings').upsert(baseSettingsPayload);
+      }
+
+      await client.from('shop_settings').upsert({
+        id: SYSTEM_CONFIG_ROW_ID,
+        shop_name: 'SYSTEM_CONFIG',
+        tagline: JSON.stringify({
+          accounts: accountsToSync,
+          ledgerColumns: settings.ledgerColumns || this.getLedgerColumns(),
+          customColumns: settings.customColumns || this.getCustomColumns(),
+          columnLabels: settings.columnLabels || this.getColumnLabels(),
+          updatedAt: new Date().toISOString()
+        }),
+        address: 'System Config Row',
+        phone: '',
+        gstin: '',
+        footer_message: 'Syncs credentials & custom configuration across all devices',
         updated_at: new Date().toISOString()
       });
 

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Footprints, ShieldCheck, UserCheck, Key, User, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { StorageService } from '../services/storage';
 import { UserRole } from '../types';
 
 export const LoginModal: React.FC = () => {
@@ -11,6 +12,11 @@ export const LoginModal: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+
+  // Proactively sync latest credentials from cloud on login screen mount
+  useEffect(() => {
+    StorageService.fetchAccountsFromCloud().catch(() => {});
+  }, []);
 
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserRole, ShopSettings } from '../types';
+import { UserRole, ShopSettings, UserAccount } from '../types';
 import { StorageService } from '../services/storage';
 
 interface AuthContextType {
@@ -11,7 +11,7 @@ interface AuthContextType {
   logout: () => void;
   shopSettings: ShopSettings;
   updateSettings: (newSettings: ShopSettings) => void;
-  updateUserAccount: (targetRole: UserRole, newUser: string, newPass: string) => boolean;
+  updateUserAccount: (targetRole: UserRole, newUser: string, newPass: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -29,6 +29,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [shopSettings, setShopSettings] = useState<ShopSettings>(() => StorageService.getShopSettings());
 
   useEffect(() => {
+    // Proactively fetch latest credentials & settings from cloud on app startup
+    StorageService.fetchAccountsFromCloud().catch(() => {});
+    StorageService.fetchShopSettingsFromCloud().catch(() => {});
+
     const unsubscribe = StorageService.onDataChange(() => {
       setShopSettings(StorageService.getShopSettings());
     });
@@ -71,12 +75,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    let accounts = StorageService.getAccounts();
+    // Always fetch latest cloud accounts during login attempt to ensure cross-device credentials sync instantly
+    let accounts: UserAccount[];
+    try {
+      accounts = await StorageService.fetchAccountsFromCloud();
+    } catch {
+      accounts = StorageService.getAccounts();
+    }
+
     let account = accounts.find(
       a => a.role === role && a.username.trim().toLowerCase() === cleanUser
     );
 
-    // If account not found locally or password mismatch, fetch latest from cloud in case credentials were changed on another device!
+    // If account not found locally or password mismatch, retry cloud fetch once more
     if (!account || account.password !== cleanPass) {
       try {
         accounts = await StorageService.fetchAccountsFromCloud();
@@ -111,12 +122,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setShopSettings(newSettings);
   };
 
-  const updateUserAccount = (targetRole: UserRole, newUser: string, newPass: string) => {
-    StorageService.updateAccountCredentials(targetRole, newUser, newPass);
+  const updateUserAccount = async (targetRole: UserRole, newUser: string, newPass: string): Promise<boolean> => {
+    const success = await StorageService.updateAccountCredentials(targetRole, newUser, newPass);
     if (userRole === targetRole) {
       setUsername(newUser);
     }
-    return true;
+    return success;
   };
 
   return (

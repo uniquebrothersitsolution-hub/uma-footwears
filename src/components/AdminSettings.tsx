@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings, Key, Store, Download, Upload, RefreshCw, CheckCircle2, ShieldCheck, UserCheck, HardDrive, FileSpreadsheet, Cloud, Database, ExternalLink, Check, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { StorageService } from '../services/storage';
@@ -17,10 +17,44 @@ export const AdminSettings: React.FC = () => {
   const [staffUser, setStaffUser] = useState(staffAcc.username);
   const [staffPass, setStaffPass] = useState(staffAcc.password);
   const [showStaffPass, setShowStaffPass] = useState(false);
+  const [isUpdatingStaff, setIsUpdatingStaff] = useState(false);
 
   const [adminUser, setAdminUser] = useState(adminAcc.username);
   const [adminPass, setAdminPass] = useState(adminAcc.password);
   const [showAdminPass, setShowAdminPass] = useState(false);
+  const [isUpdatingAdmin, setIsUpdatingAdmin] = useState(false);
+
+  // Proactively fetch latest accounts on mount & listen to changes from other devices/tabs
+  useEffect(() => {
+    StorageService.fetchAccountsFromCloud().then(accs => {
+      const staff = accs.find(a => a.role === 'staff' && a.username !== 'uma');
+      if (staff) {
+        setStaffUser(staff.username);
+        setStaffPass(staff.password);
+      }
+      const admin = accs.find(a => a.role === 'admin' && a.username !== 'uma');
+      if (admin) {
+        setAdminUser(admin.username);
+        setAdminPass(admin.password);
+      }
+    }).catch(() => {});
+
+    const unsubscribe = StorageService.onDataChange(() => {
+      const accs = StorageService.getAccounts();
+      const staff = accs.find(a => a.role === 'staff' && a.username !== 'uma');
+      if (staff) {
+        setStaffUser(staff.username);
+        setStaffPass(staff.password);
+      }
+      const admin = accs.find(a => a.role === 'admin' && a.username !== 'uma');
+      if (admin) {
+        setAdminUser(admin.username);
+        setAdminPass(admin.password);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Shop Details Form
   const [shopName, setShopName] = useState(shopSettings.shopName);
@@ -46,18 +80,40 @@ export const AdminSettings: React.FC = () => {
     setTimeout(() => setFeedback(null), 4000);
   };
 
-  const handleUpdateStaffCreds = (e: React.FormEvent) => {
+  const handleUpdateStaffCreds = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffUser.trim() || !staffPass.trim()) return;
-    updateUserAccount('staff', staffUser.trim(), staffPass.trim());
-    showNotification('Staff credentials updated successfully!');
+    setIsUpdatingStaff(true);
+    try {
+      const ok = await updateUserAccount('staff', staffUser.trim(), staffPass.trim());
+      if (ok) {
+        showNotification('Staff credentials updated and synced to all devices via Cloud!');
+      } else {
+        showNotification('Staff credentials updated locally, but cloud sync failed. Check internet connection.', 'error');
+      }
+    } catch {
+      showNotification('Failed to update staff credentials.', 'error');
+    } finally {
+      setIsUpdatingStaff(false);
+    }
   };
 
-  const handleUpdateAdminCreds = (e: React.FormEvent) => {
+  const handleUpdateAdminCreds = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminUser.trim() || !adminPass.trim()) return;
-    updateUserAccount('admin', adminUser.trim(), adminPass.trim());
-    showNotification('Admin credentials updated successfully!');
+    setIsUpdatingAdmin(true);
+    try {
+      const ok = await updateUserAccount('admin', adminUser.trim(), adminPass.trim());
+      if (ok) {
+        showNotification('Admin credentials updated and synced to all devices via Cloud!');
+      } else {
+        showNotification('Admin credentials updated locally, but cloud sync failed. Check internet connection.', 'error');
+      }
+    } catch {
+      showNotification('Failed to update admin credentials.', 'error');
+    } finally {
+      setIsUpdatingAdmin(false);
+    }
   };
 
   const handleUpdateShopInfo = (e: React.FormEvent) => {
@@ -238,9 +294,17 @@ export const AdminSettings: React.FC = () => {
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] text-[#1E1B4B] font-semibold text-xs rounded-xl border border-[#E7E5EF] transition"
+              disabled={isUpdatingStaff}
+              className="w-full py-2.5 bg-[#F7F8FC] hover:bg-[#EEEBFF] disabled:opacity-60 text-[#1E1B4B] font-semibold text-xs rounded-xl border border-[#E7E5EF] transition flex items-center justify-center space-x-2"
             >
-              Update Staff Credentials
+              {isUpdatingStaff ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#6D5DFB]" />
+                  <span>Updating & Syncing...</span>
+                </>
+              ) : (
+                <span>Update Staff Credentials</span>
+              )}
             </button>
           </form>
         </div>
@@ -291,9 +355,17 @@ export const AdminSettings: React.FC = () => {
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-semibold text-xs rounded-xl transition"
+              disabled={isUpdatingAdmin}
+              className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 disabled:opacity-60 text-amber-900 border border-amber-200 font-semibold text-xs rounded-xl transition flex items-center justify-center space-x-2"
             >
-              Update Admin Credentials
+              {isUpdatingAdmin ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                  <span>Updating & Syncing...</span>
+                </>
+              ) : (
+                <span>Update Admin Credentials</span>
+              )}
             </button>
           </form>
         </div>
