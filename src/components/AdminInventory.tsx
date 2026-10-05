@@ -34,7 +34,7 @@ export const AdminInventory: React.FC = () => {
   const [wholesalePercent, setWholesalePercent] = useState<number | string>('');
   const [discountPercent, setDiscountPercent] = useState<number | string>(10);
   const [stock, setStock] = useState<number | string>(10);
-  const [sizeStockMap, setSizeStockMap] = useState<Record<string, number>>({});
+  const [sizeStockMap, setSizeStockMap] = useState<Record<string, number | string>>({});
   const [sizes, setSizes] = useState<string[]>(STANDARD_SIZES);
   const [newSizeInput, setNewSizeInput] = useState('');
   const [colors, setColors] = useState<ProductColor[]>([{ name: 'Black', hex: '#000000' }]);
@@ -85,7 +85,7 @@ export const AdminInventory: React.FC = () => {
   };
 
   const openEditModal = (product: Product) => {
-    setEditingProductId(product.id);
+    setEditingProductId(product.id || product.code || null);
     setCode(product.code || '');
     setName(product.name);
     setCategory(product.category || '');
@@ -101,13 +101,27 @@ export const AdminInventory: React.FC = () => {
       setWholesalePercent('');
     }
     setDiscountPercent(product.discountPercent || 0);
+
+    // Determine active sizes for the product
+    const activeSizes = product.sizes && product.sizes.length > 0
+      ? [...product.sizes]
+      : (product.sizeStock && Object.keys(product.sizeStock).length > 0
+          ? Object.keys(product.sizeStock).sort((a, b) => Number(a) - Number(b))
+          : STANDARD_SIZES);
+
     // Initialize size-wise stock from product data
-    const prodSizeStock = product.sizeStock && Object.keys(product.sizeStock).length > 0
-      ? { ...product.sizeStock }
-      : migrateSizeStock(product);
+    const sourceStock = product.sizeStock && Object.keys(product.sizeStock).length > 0
+      ? product.sizeStock
+      : migrateSizeStock({ ...product, sizes: activeSizes });
+
+    const prodSizeStock: Record<string, number | string> = {};
+    activeSizes.forEach(sz => {
+      prodSizeStock[sz] = sourceStock[sz] !== undefined ? Math.max(0, sourceStock[sz]) : 0;
+    });
+
     setSizeStockMap(prodSizeStock);
     setStock(computeTotalStock(prodSizeStock));
-    setSizes(product.sizes && product.sizes.length > 0 ? product.sizes : STANDARD_SIZES);
+    setSizes(activeSizes);
     setNewSizeInput('');
     setColors(product.colors || []);
     setIsModalOpen(true);
@@ -160,9 +174,9 @@ export const AdminInventory: React.FC = () => {
   };
 
   const handleSizeStockChange = (sz: string, val: string) => {
-    const num = val === '' ? 0 : Math.max(0, parseInt(val, 10) || 0);
+    const parsed = val === '' ? '' : Math.max(0, parseInt(val, 10) || 0);
     setSizeStockMap(prev => {
-      const updated = { ...prev, [sz]: num };
+      const updated = { ...prev, [sz]: parsed };
       setStock(computeTotalStock(updated));
       return updated;
     });
@@ -185,7 +199,6 @@ export const AdminInventory: React.FC = () => {
 
     const numWholesale = typeof wholesalePrice === 'number' ? wholesalePrice : (wholesalePrice === '' ? 0 : parseFloat(wholesalePrice));
     const numDisc = typeof discountPercent === 'number' ? discountPercent : (discountPercent === '' ? 0 : parseFloat(discountPercent));
-    const numStock = typeof stock === 'number' ? stock : (stock === '' ? 0 : parseInt(String(stock), 10));
 
     const finalPrice = Math.round(numPrice * 100) / 100;
     const numWholesalePct = typeof wholesalePercent === 'number' ? wholesalePercent : (wholesalePercent === '' ? NaN : parseFloat(wholesalePercent));
@@ -201,7 +214,8 @@ export const AdminInventory: React.FC = () => {
     const finalSizes = sizes.length > 0 ? sizes : STANDARD_SIZES;
     const finalSizeStock: Record<string, number> = {};
     finalSizes.forEach(sz => {
-      finalSizeStock[sz] = Math.max(0, sizeStockMap[sz] || 0);
+      const rawVal = sizeStockMap[sz];
+      finalSizeStock[sz] = typeof rawVal === 'number' ? Math.max(0, rawVal) : Math.max(0, parseInt(String(rawVal || 0), 10) || 0);
     });
     const finalTotalStock = computeTotalStock(finalSizeStock);
 
@@ -227,7 +241,7 @@ export const AdminInventory: React.FC = () => {
     setCategoryFilter('All');
 
     if (editingProductId) {
-      setProducts(prev => prev.map(p => (p.id === editingProductId || p.code === productData.code) ? productData : p));
+      setProducts(prev => prev.map(p => (p.id === editingProductId || (productData.code && p.code === productData.code)) ? productData : p));
       const updated = await StorageService.updateProductAsync(productData);
       setProducts(updated);
       showToast(`Product "${productData.name}" updated successfully`);
@@ -888,6 +902,7 @@ export const AdminInventory: React.FC = () => {
                         setSizeStockMap(prev => {
                           const updated = { ...prev };
                           STANDARD_SIZES.forEach(s => { if (updated[s] === undefined) updated[s] = 0; });
+                          setStock(computeTotalStock(updated));
                           return updated;
                         });
                       }}
@@ -902,7 +917,7 @@ export const AdminInventory: React.FC = () => {
                         const adults = ['6', '7', '8', '9', '10', '11', '12'];
                         setSizes(adults);
                         setSizeStockMap(prev => {
-                          const updated: Record<string, number> = {};
+                          const updated: Record<string, number | string> = {};
                           adults.forEach(s => { updated[s] = prev[s] ?? 0; });
                           setStock(computeTotalStock(updated));
                           return updated;
@@ -919,7 +934,7 @@ export const AdminInventory: React.FC = () => {
                         const kids = ['1', '2', '3', '4', '5'];
                         setSizes(kids);
                         setSizeStockMap(prev => {
-                          const updated: Record<string, number> = {};
+                          const updated: Record<string, number | string> = {};
                           kids.forEach(s => { updated[s] = prev[s] ?? 0; });
                           setStock(computeTotalStock(updated));
                           return updated;

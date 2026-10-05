@@ -18,12 +18,14 @@ create table if not exists public.products (
   stock integer not null default 0,
   colors jsonb not null default '[]'::jsonb,
   sizes jsonb not null default '["6","7","8","9","10","11"]'::jsonb,
+  size_stock jsonb not null default '{}'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
 
 -- Safe migration if products table already exists
 alter table public.products add column if not exists sizes jsonb not null default '["6","7","8","9","10","11"]'::jsonb;
+alter table public.products add column if not exists size_stock jsonb not null default '{}'::jsonb;
 
 -- 3. SALES TRANSACTIONS TABLE
 create table if not exists public.sales_transactions (

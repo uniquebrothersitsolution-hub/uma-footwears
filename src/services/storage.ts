@@ -517,10 +517,14 @@ const INITIAL_SETTINGS: ShopSettings = {
 // Helper: Generate sizeStock from legacy product (distribute total stock evenly across sizes)
 function migrateSizeStock(product: Product): Record<string, number> {
   if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
-    return product.sizeStock;
+    const res: Record<string, number> = {};
+    for (const [k, v] of Object.entries(product.sizeStock)) {
+      res[k] = typeof v === 'number' ? Math.max(0, v) : (parseInt(String(v), 10) || 0);
+    }
+    return res;
   }
   const sizes = product.sizes && product.sizes.length > 0 ? product.sizes : ['7', '8', '9', '10'];
-  const total = product.stock || 0;
+  const total = typeof product.stock === 'number' ? product.stock : (parseInt(String(product.stock || 0), 10) || 0);
   const perSize = Math.floor(total / sizes.length);
   const remainder = total % sizes.length;
   const sizeStock: Record<string, number> = {};
@@ -531,8 +535,12 @@ function migrateSizeStock(product: Product): Record<string, number> {
 }
 
 // Helper: Compute total stock from sizeStock
-function computeTotalStock(sizeStock: Record<string, number>): number {
-  return Object.values(sizeStock).reduce((sum, qty) => sum + Math.max(0, qty), 0);
+function computeTotalStock(sizeStock: Record<string, number | string>): number {
+  if (!sizeStock || typeof sizeStock !== 'object') return 0;
+  return Object.values(sizeStock).reduce((sum: number, qty) => {
+    const num = typeof qty === 'number' ? qty : (parseInt(String(qty), 10) || 0);
+    return sum + Math.max(0, num);
+  }, 0);
 }
 
 // Helper: Get stock for a specific size (with fallback)
@@ -640,11 +648,13 @@ export const StorageService = {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
         // Return products in their stored order (saveProducts already persists the correct sort order).
-        // Only enrich with sizeStock/stock; do NOT re-sort — re-sorting on every read
-        // was overriding the user's chosen sort order.
+        // Enrich with sizeStock/stock; do NOT re-sort on every read.
         const mapped = parsed.map((p: Product) => {
           const sizes = p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10'];
           const sizeStock = migrateSizeStock({ ...p, sizes });
+          sizes.forEach(sz => {
+            if (sizeStock[sz] === undefined) sizeStock[sz] = 0;
+          });
           const stock = computeTotalStock(sizeStock);
           return { ...p, sizes, sizeStock, stock };
         });
@@ -661,6 +671,111 @@ export const StorageService = {
     const orderKeys = products.map(p => p.code || p.id).filter(Boolean);
     this.saveProductOrder(orderKeys);
     this.emitDataChange();
+  },
+
+  /**
+   * Helper to persist product sizeStock into SYSTEM_CONFIG (row 999) in shop_settings
+   * and update size_stock column in products table if present in Supabase.
+   */
+  async syncProductSizeStockToCloud(codeOrId: string, sizeStock: Record<string, number>, totalStock?: number): Promise<void> {
+    if (!isSupabaseConfigured() || !codeOrId) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      // 1. Try updating size_stock directly on products table if column exists
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+      if (totalStock !== undefined) updateData.stock = totalStock;
+
+      const uuid = toValidUuidOrNull(codeOrId);
+      let tryQuery = client.from('products').update({ ...updateData, size_stock: sizeStock });
+      if (uuid) tryQuery = tryQuery.or(`id.eq.${uuid},code.eq.${codeOrId}`);
+      else tryQuery = tryQuery.eq('code', codeOrId);
+
+      const { error: colErr } = await tryQuery;
+      if (colErr) {
+        let baseQuery = client.from('products').update(updateData);
+        if (uuid) baseQuery = baseQuery.or(`id.eq.${uuid},code.eq.${codeOrId}`);
+        else baseQuery = baseQuery.eq('code', codeOrId);
+        await baseQuery;
+      }
+
+      // 2. Persist to SYSTEM_CONFIG (row 999) in shop_settings
+      let existingConfig: Record<string, any> = {};
+      try {
+        const { data: sysRow } = await client
+          .from('shop_settings')
+          .select('tagline')
+          .eq('id', SYSTEM_CONFIG_ROW_ID)
+          .maybeSingle();
+        if (sysRow?.tagline) {
+          try { existingConfig = JSON.parse(sysRow.tagline); } catch { existingConfig = {}; }
+        }
+      } catch { /* ignore */ }
+
+      const existingSizeStockMap = (existingConfig.productSizeStock && typeof existingConfig.productSizeStock === 'object')
+        ? existingConfig.productSizeStock
+        : {};
+
+      const updatedSizeStockMap = {
+        ...existingSizeStockMap,
+        [codeOrId]: sizeStock
+      };
+
+      await client.from('shop_settings').upsert({
+        id: SYSTEM_CONFIG_ROW_ID,
+        shop_name: 'SYSTEM_CONFIG',
+        tagline: JSON.stringify({
+          ...existingConfig,
+          productSizeStock: updatedSizeStockMap,
+          updatedAt: new Date().toISOString()
+        }),
+        address: 'System Config Row',
+        phone: '',
+        gstin: '',
+        footer_message: 'Syncs credentials & custom configuration across all devices',
+        updated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.warn('syncProductSizeStockToCloud notice:', err);
+    }
+  },
+
+  async removeProductSizeStockFromCloud(codeOrId: string): Promise<void> {
+    if (!isSupabaseConfigured() || !codeOrId) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const { data: sysRow } = await client
+        .from('shop_settings')
+        .select('tagline')
+        .eq('id', SYSTEM_CONFIG_ROW_ID)
+        .maybeSingle();
+      if (sysRow?.tagline) {
+        const existingConfig = JSON.parse(sysRow.tagline);
+        if (existingConfig.productSizeStock && existingConfig.productSizeStock[codeOrId]) {
+          delete existingConfig.productSizeStock[codeOrId];
+          await client.from('shop_settings').upsert({
+            id: SYSTEM_CONFIG_ROW_ID,
+            shop_name: 'SYSTEM_CONFIG',
+            tagline: JSON.stringify({
+              ...existingConfig,
+              updatedAt: new Date().toISOString()
+            }),
+            address: 'System Config Row',
+            phone: '',
+            gstin: '',
+            footer_message: 'Syncs credentials & custom configuration across all devices',
+            updated_at: new Date().toISOString()
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('removeProductSizeStockFromCloud notice:', err);
+    }
   },
 
   async fetchProductsFromCloud(): Promise<Product[]> {
@@ -686,18 +801,95 @@ export const StorageService = {
         return this.getProducts();
       }
 
-      const products: Product[] = data.map((row: any) => ({
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        category: row.category,
-        price: Number(row.price),
-        wholesalePrice: Number(row.wholesale_price || 0),
-        discountPercent: Number(row.discount_percent || 0),
-        stock: Number(row.stock || 0),
-        colors: Array.isArray(row.colors) && row.colors.length > 0 ? row.colors : [{ name: 'Standard' }],
-        sizes: Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['7', '8', '9', '10']
-      }));
+      // Fetch cloud size-stock mapping from SYSTEM_CONFIG row 999
+      let cloudSizeStockMap: Record<string, Record<string, number>> = {};
+      try {
+        const { data: sysRow } = await client
+          .from('shop_settings')
+          .select('tagline')
+          .eq('id', SYSTEM_CONFIG_ROW_ID)
+          .maybeSingle();
+        if (sysRow?.tagline) {
+          const parsed = JSON.parse(sysRow.tagline);
+          if (parsed?.productSizeStock && typeof parsed.productSizeStock === 'object') {
+            cloudSizeStockMap = parsed.productSizeStock;
+          }
+        }
+      } catch (e) {
+        console.warn('Notice reading cloud productSizeStock from SYSTEM_CONFIG:', e);
+      }
+
+      // Get current local products as an additional fallback cache to preserve edited size stock
+      const localProducts = this.getProducts();
+      const localMap = new Map<string, Product>();
+      localProducts.forEach(p => {
+        if (p.code) localMap.set(p.code, p);
+        if (p.id) localMap.set(p.id, p);
+      });
+
+      const products: Product[] = data.map((row: any) => {
+        const code = row.code || '';
+        const id = row.id || '';
+        const localProd = localMap.get(code) || localMap.get(id);
+
+        const rawSizes = Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['7', '8', '9', '10'];
+
+        // Determine size-wise stock with precedence:
+        // 1. row.size_stock (if present from products table)
+        // 2. cloudSizeStockMap by code or id (from SYSTEM_CONFIG)
+        // 3. localProd.sizeStock (from local storage)
+        // 4. migrateSizeStock as fallback
+        let resolvedSizeStock: Record<string, number> | undefined;
+
+        if (row.size_stock && typeof row.size_stock === 'object' && Object.keys(row.size_stock).length > 0) {
+          resolvedSizeStock = { ...row.size_stock };
+        } else if (code && cloudSizeStockMap[code] && Object.keys(cloudSizeStockMap[code]).length > 0) {
+          resolvedSizeStock = { ...cloudSizeStockMap[code] };
+        } else if (id && cloudSizeStockMap[id] && Object.keys(cloudSizeStockMap[id]).length > 0) {
+          resolvedSizeStock = { ...cloudSizeStockMap[id] };
+        } else if (localProd?.sizeStock && Object.keys(localProd.sizeStock).length > 0) {
+          resolvedSizeStock = { ...localProd.sizeStock };
+        }
+
+        if (!resolvedSizeStock || Object.keys(resolvedSizeStock).length === 0) {
+          resolvedSizeStock = migrateSizeStock({
+            ...row,
+            sizes: rawSizes,
+            stock: Number(row.stock || 0)
+          });
+        }
+
+        // Ensure all active sizes exist in resolvedSizeStock
+        rawSizes.forEach((sz: string) => {
+          if (resolvedSizeStock![sz] === undefined) {
+            resolvedSizeStock![sz] = 0;
+          }
+        });
+
+        // Combined sizes list (includes any extra size keys from sizeStock)
+        const combinedSizes = Array.from(new Set([...rawSizes, ...Object.keys(resolvedSizeStock)])).sort((a, b) => {
+          const numA = Number(a);
+          const numB = Number(b);
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return a.localeCompare(b);
+        });
+
+        const computedStock = computeTotalStock(resolvedSizeStock);
+
+        return {
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          category: row.category,
+          price: Number(row.price),
+          wholesalePrice: Number(row.wholesale_price || 0),
+          discountPercent: Number(row.discount_percent || 0),
+          stock: computedStock,
+          sizeStock: resolvedSizeStock,
+          colors: Array.isArray(row.colors) && row.colors.length > 0 ? row.colors : [{ name: 'Standard' }],
+          sizes: combinedSizes
+        };
+      });
 
       const sortedProducts = this.sortProductsByOrder(products);
       this.saveProducts(sortedProducts);
@@ -723,7 +915,7 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const { data, error } = await client.from('products').upsert({
+            const basePayload: any = {
               code: product.code,
               name: product.name,
               category: product.category,
@@ -733,15 +925,30 @@ export const StorageService = {
               stock: product.stock,
               colors: product.colors || [],
               sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES
-            }, { onConflict: 'code' }).select();
+            };
+            const fullPayload = {
+              ...basePayload,
+              ...(product.sizeStock && Object.keys(product.sizeStock).length > 0 ? { size_stock: product.sizeStock } : {})
+            };
+
+            let { data, error } = await client.from('products').upsert(fullPayload, { onConflict: 'code' }).select();
 
             if (error) {
-              console.error('Cloud product add error:', error);
-            } else if (data && data[0] && data[0].id) {
+              const retry = await client.from('products').upsert(basePayload, { onConflict: 'code' }).select();
+              data = retry.data;
+              if (retry.error) console.error('Cloud product add error:', retry.error);
+            }
+
+            if (data && data[0] && data[0].id) {
               product.id = data[0].id;
               const currentProds = this.getProducts();
               const withId = currentProds.map(p => p.code === product.code ? { ...p, id: data[0].id } : p);
               this.saveProducts(withId);
+            }
+
+            // Sync sizeStock to SYSTEM_CONFIG row 999
+            if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+              await this.syncProductSizeStockToCloud(product.code || product.id, product.sizeStock, product.stock);
             }
           } catch (err) {
             console.error('Cloud sync error:', err);
@@ -762,7 +969,7 @@ export const StorageService = {
       const client = getSupabaseClient();
       if (client) {
         try {
-          const { data, error } = await client.from('products').upsert({
+          const basePayload: any = {
             code: product.code,
             name: product.name,
             category: product.category,
@@ -772,15 +979,30 @@ export const StorageService = {
             stock: product.stock,
             colors: product.colors || [],
             sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES
-          }, { onConflict: 'code' }).select();
+          };
+          const fullPayload = {
+            ...basePayload,
+            ...(product.sizeStock && Object.keys(product.sizeStock).length > 0 ? { size_stock: product.sizeStock } : {})
+          };
+
+          let { data, error } = await client.from('products').upsert(fullPayload, { onConflict: 'code' }).select();
 
           if (error) {
-            console.error('Cloud product add error:', error);
-          } else if (data && data[0] && data[0].id) {
+            const retry = await client.from('products').upsert(basePayload, { onConflict: 'code' }).select();
+            data = retry.data;
+            if (retry.error) console.error('Cloud product add error:', retry.error);
+          }
+
+          if (data && data[0] && data[0].id) {
             product.id = data[0].id;
             const currentProds = this.getProducts();
             const withId = currentProds.map(p => p.code === product.code ? { ...p, id: data[0].id } : p);
             this.saveProducts(withId);
+          }
+
+          // Sync sizeStock to SYSTEM_CONFIG row 999
+          if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+            await this.syncProductSizeStockToCloud(product.code || product.id, product.sizeStock, product.stock);
           }
         } catch (err) {
           console.error('Cloud sync error:', err);
@@ -803,7 +1025,7 @@ export const StorageService = {
       if (client) {
         (async () => {
           try {
-            const { error } = await client.from('products').update({
+            const basePayload: any = {
               name: product.name,
               category: product.category,
               price: product.price,
@@ -813,9 +1035,44 @@ export const StorageService = {
               colors: product.colors || [],
               sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES,
               updated_at: new Date().toISOString()
-            }).eq('code', product.code);
-            if (error) console.error('Cloud product update error:', error);
-            else this.emitDataChange();
+            };
+
+            const fullPayload = {
+              ...basePayload,
+              ...(product.sizeStock && Object.keys(product.sizeStock).length > 0 ? { size_stock: product.sizeStock } : {})
+            };
+
+            const targetCode = product.code;
+            const targetId = toValidUuidOrNull(product.id);
+            let updateBuilder = client.from('products').update(fullPayload);
+            if (targetId && targetCode) {
+              updateBuilder = updateBuilder.or(`id.eq.${targetId},code.eq.${targetCode}`);
+            } else if (targetId) {
+              updateBuilder = updateBuilder.eq('id', targetId);
+            } else {
+              updateBuilder = updateBuilder.eq('code', targetCode);
+            }
+
+            let { error } = await updateBuilder;
+            if (error) {
+              let retryBuilder = client.from('products').update(basePayload);
+              if (targetId && targetCode) {
+                retryBuilder = retryBuilder.or(`id.eq.${targetId},code.eq.${targetCode}`);
+              } else if (targetId) {
+                retryBuilder = retryBuilder.eq('id', targetId);
+              } else {
+                retryBuilder = retryBuilder.eq('code', targetCode);
+              }
+              const retryRes = await retryBuilder;
+              if (retryRes.error) console.error('Cloud product update error:', retryRes.error);
+            }
+
+            // Sync sizeStock to SYSTEM_CONFIG row 999
+            if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+              await this.syncProductSizeStockToCloud(targetCode || product.id, product.sizeStock, product.stock);
+            }
+
+            this.emitDataChange();
           } catch (err) {
             console.error('Cloud sync error:', err);
           }
@@ -835,7 +1092,7 @@ export const StorageService = {
       const client = getSupabaseClient();
       if (client) {
         try {
-          const { error } = await client.from('products').update({
+          const basePayload: any = {
             name: product.name,
             category: product.category,
             price: product.price,
@@ -845,8 +1102,42 @@ export const StorageService = {
             colors: product.colors || [],
             sizes: product.sizes && product.sizes.length > 0 ? product.sizes : DEFAULT_PRODUCT_SIZES,
             updated_at: new Date().toISOString()
-          }).eq('code', product.code);
-          if (error) console.error('Cloud product update error:', error);
+          };
+
+          const fullPayload = {
+            ...basePayload,
+            ...(product.sizeStock && Object.keys(product.sizeStock).length > 0 ? { size_stock: product.sizeStock } : {})
+          };
+
+          const targetCode = product.code;
+          const targetId = toValidUuidOrNull(product.id);
+          let updateBuilder = client.from('products').update(fullPayload);
+          if (targetId && targetCode) {
+            updateBuilder = updateBuilder.or(`id.eq.${targetId},code.eq.${targetCode}`);
+          } else if (targetId) {
+            updateBuilder = updateBuilder.eq('id', targetId);
+          } else {
+            updateBuilder = updateBuilder.eq('code', targetCode);
+          }
+
+          let { error } = await updateBuilder;
+          if (error) {
+            let retryBuilder = client.from('products').update(basePayload);
+            if (targetId && targetCode) {
+              retryBuilder = retryBuilder.or(`id.eq.${targetId},code.eq.${targetCode}`);
+            } else if (targetId) {
+              retryBuilder = retryBuilder.eq('id', targetId);
+            } else {
+              retryBuilder = retryBuilder.eq('code', targetCode);
+            }
+            const retryRes = await retryBuilder;
+            if (retryRes.error) console.error('Cloud product update error:', retryRes.error);
+          }
+
+          // Sync sizeStock to SYSTEM_CONFIG row 999
+          if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+            await this.syncProductSizeStockToCloud(targetCode || product.id, product.sizeStock, product.stock);
+          }
         } catch (err) {
           console.error('Cloud sync error:', err);
         }
@@ -889,7 +1180,12 @@ export const StorageService = {
             }
             const { error } = await delQuery;
             if (error) console.error('Cloud product delete error:', error);
-            else this.emitDataChange();
+            else {
+              this.emitDataChange();
+              if (target.code || target.id) {
+                this.removeProductSizeStockFromCloud(target.code || target.id);
+              }
+            }
           } catch (err) {
             console.error('Cloud sync error:', err);
           }
@@ -929,6 +1225,9 @@ export const StorageService = {
           }
           const { error } = await delQuery;
           if (error) console.error('Cloud product delete error:', error);
+          else if (target.code || target.id) {
+            this.removeProductSizeStockFromCloud(target.code || target.id);
+          }
         } catch (err) {
           console.error('Cloud sync error:', err);
         }
@@ -1406,14 +1705,28 @@ export const StorageService = {
               try {
                 const { data: prod } = await client
                   .from('products')
-                  .select('id, stock')
+                  .select('id, code, stock')
                   .or(`code.eq.${item.productId},name.eq.${item.productName}`)
                   .limit(1)
                   .maybeSingle();
 
                 if (prod) {
                   const newStock = Math.max(0, (prod.stock || 0) - item.quantity);
-                  await client.from('products').update({ stock: newStock }).eq('id', prod.id);
+                  const targetCode = prod.code || item.productId;
+                  const localMatch = this.getProducts().find(p => p.id === prod.id || p.code === targetCode || p.name === item.productName);
+                  const updatedSizeStock = localMatch?.sizeStock;
+
+                  const updPayload: any = { stock: newStock };
+                  if (updatedSizeStock) updPayload.size_stock = updatedSizeStock;
+
+                  const { error: updErr } = await client.from('products').update(updPayload).eq('id', prod.id);
+                  if (updErr && updatedSizeStock) {
+                    await client.from('products').update({ stock: newStock }).eq('id', prod.id);
+                  }
+
+                  if (targetCode && updatedSizeStock) {
+                    this.syncProductSizeStockToCloud(targetCode, updatedSizeStock, newStock).catch(() => {});
+                  }
                 }
               } catch (err) {
                 console.error('Stock decrement error:', err);
@@ -1537,14 +1850,28 @@ export const StorageService = {
           try {
             const { data: prod } = await client
               .from('products')
-              .select('id, stock')
+              .select('id, code, stock')
               .or(`code.eq.${item.productId},name.eq.${item.productName}`)
               .limit(1)
               .maybeSingle();
 
             if (prod) {
               const restoredStock = (prod.stock || 0) + (item.quantity || 1);
-              await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+              const targetCode = prod.code || item.productId;
+              const localMatch = this.getProducts().find(p => p.id === prod.id || p.code === targetCode || p.name === item.productName);
+              const updatedSizeStock = localMatch?.sizeStock;
+
+              const updPayload: any = { stock: restoredStock };
+              if (updatedSizeStock) updPayload.size_stock = updatedSizeStock;
+
+              const { error: updErr } = await client.from('products').update(updPayload).eq('id', prod.id);
+              if (updErr && updatedSizeStock) {
+                await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+              }
+
+              if (targetCode && updatedSizeStock) {
+                this.syncProductSizeStockToCloud(targetCode, updatedSizeStock, restoredStock).catch(() => {});
+              }
             }
           } catch (stkErr) {
             console.warn('Stock restore in cloud notice:', stkErr);
@@ -1567,7 +1894,7 @@ export const StorageService = {
     if (target) {
       this.markBillAsDeleted(target.billNo, target.id);
 
-      // Restore stock locally
+      // Restore stock locally (size-wise)
       if (Array.isArray(target.items) && target.items.length > 0) {
         const products = this.getProducts();
         let changed = false;
@@ -1579,7 +1906,13 @@ export const StorageService = {
           );
           if (soldItem) {
             changed = true;
-            return { ...p, stock: (p.stock || 0) + (soldItem.quantity || 1) };
+            const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+            const sz = soldItem.size || 'Standard';
+            if (updatedSizeStock[sz] !== undefined) {
+              updatedSizeStock[sz] += (soldItem.quantity || 1);
+            }
+            const newTotalStock = computeTotalStock(updatedSizeStock);
+            return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };
           }
           return p;
         });
@@ -1607,7 +1940,7 @@ export const StorageService = {
     if (target) {
       this.markBillAsDeleted(target.billNo, target.id);
 
-      // Restore stock locally
+      // Restore stock locally (size-wise)
       if (Array.isArray(target.items) && target.items.length > 0) {
         const products = this.getProducts();
         let changed = false;
@@ -1619,7 +1952,13 @@ export const StorageService = {
           );
           if (soldItem) {
             changed = true;
-            return { ...p, stock: (p.stock || 0) + (soldItem.quantity || 1) };
+            const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+            const sz = soldItem.size || 'Standard';
+            if (updatedSizeStock[sz] !== undefined) {
+              updatedSizeStock[sz] += (soldItem.quantity || 1);
+            }
+            const newTotalStock = computeTotalStock(updatedSizeStock);
+            return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };
           }
           return p;
         });
@@ -1679,7 +2018,7 @@ export const StorageService = {
     const updatedList = transactions.map(t => (t.id === tx.id || t.billNo === tx.billNo) ? updatedTx : t);
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updatedList));
 
-    // Restore stock locally for the removed item
+    // Restore stock locally for the removed item (size-wise)
     const products = this.getProducts();
     let prodsChanged = false;
     const updatedProducts = products.map(p => {
@@ -1689,7 +2028,13 @@ export const StorageService = {
         (removedItem.productName && p.name && removedItem.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
       ) {
         prodsChanged = true;
-        return { ...p, stock: (p.stock || 0) + (removedItem.quantity || 1) };
+        const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+        const sz = removedItem.size || 'Standard';
+        if (updatedSizeStock[sz] !== undefined) {
+          updatedSizeStock[sz] += (removedItem.quantity || 1);
+        }
+        const newTotalStock = computeTotalStock(updatedSizeStock);
+        return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };
       }
       return p;
     });
@@ -1749,14 +2094,28 @@ export const StorageService = {
           try {
             const { data: prod } = await client
               .from('products')
-              .select('id, stock')
+              .select('id, code, stock')
               .or(`code.eq.${removedItem.productId},name.eq.${removedItem.productName}`)
               .limit(1)
               .maybeSingle();
 
             if (prod) {
               const restoredStock = (prod.stock || 0) + (removedItem.quantity || 1);
-              await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+              const targetCode = prod.code || removedItem.productId;
+              const localMatch = this.getProducts().find(p => p.id === prod.id || p.code === targetCode || p.name === removedItem.productName);
+              const updatedSizeStock = localMatch?.sizeStock;
+
+              const updPayload: any = { stock: restoredStock };
+              if (updatedSizeStock) updPayload.size_stock = updatedSizeStock;
+
+              const { error: updErr } = await client.from('products').update(updPayload).eq('id', prod.id);
+              if (updErr && updatedSizeStock) {
+                await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+              }
+
+              if (targetCode && updatedSizeStock) {
+                this.syncProductSizeStockToCloud(targetCode, updatedSizeStock, restoredStock).catch(() => {});
+              }
             }
           } catch (stkErr) {
             console.warn('Stock restore in cloud notice:', stkErr);
@@ -2705,11 +3064,17 @@ export const StorageService = {
     }
 
     try {
-      // 1. Push products
+      // 1. Push products with sizeStock
       const localProducts = this.getProducts();
       let prodCount = 0;
+      const allSizeStocks: Record<string, Record<string, number>> = {};
       for (const p of localProducts) {
-        const { error } = await client.from('products').upsert({
+        if (p.sizeStock && Object.keys(p.sizeStock).length > 0) {
+          if (p.code) allSizeStocks[p.code] = p.sizeStock;
+          if (p.id) allSizeStocks[p.id] = p.sizeStock;
+        }
+
+        const basePayload: any = {
           code: p.code,
           name: p.name,
           category: p.category,
@@ -2719,8 +3084,53 @@ export const StorageService = {
           stock: p.stock,
           colors: p.colors || [],
           sizes: p.sizes && p.sizes.length > 0 ? p.sizes : DEFAULT_PRODUCT_SIZES
-        }, { onConflict: 'code' });
-        if (!error) prodCount++;
+        };
+        const fullPayload = {
+          ...basePayload,
+          ...(p.sizeStock && Object.keys(p.sizeStock).length > 0 ? { size_stock: p.sizeStock } : {})
+        };
+
+        let { error } = await client.from('products').upsert(fullPayload, { onConflict: 'code' });
+        if (error) {
+          const retry = await client.from('products').upsert(basePayload, { onConflict: 'code' });
+          if (!retry.error) prodCount++;
+        } else {
+          prodCount++;
+        }
+      }
+
+      // Bulk persist all product size stocks to SYSTEM_CONFIG row 999
+      if (Object.keys(allSizeStocks).length > 0) {
+        try {
+          const { data: sysRow } = await client
+            .from('shop_settings')
+            .select('tagline')
+            .eq('id', SYSTEM_CONFIG_ROW_ID)
+            .maybeSingle();
+          let existingConfig: Record<string, any> = {};
+          if (sysRow?.tagline) {
+            try { existingConfig = JSON.parse(sysRow.tagline); } catch {}
+          }
+          await client.from('shop_settings').upsert({
+            id: SYSTEM_CONFIG_ROW_ID,
+            shop_name: 'SYSTEM_CONFIG',
+            tagline: JSON.stringify({
+              ...existingConfig,
+              productSizeStock: {
+                ...(existingConfig.productSizeStock || {}),
+                ...allSizeStocks
+              },
+              updatedAt: new Date().toISOString()
+            }),
+            address: 'System Config Row',
+            phone: '',
+            gstin: '',
+            footer_message: 'Syncs credentials & custom configuration across all devices',
+            updated_at: new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn('Notice saving bulk productSizeStock to cloud:', e);
+        }
       }
 
       // 2. Push sales transactions
