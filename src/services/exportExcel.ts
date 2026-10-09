@@ -84,6 +84,9 @@ export function deriveFootwearType(
   if (combined.includes('BELLY')) {
     return 'Belly';
   }
+  if (combined.includes('KID') || combined.includes('BOY') || combined.includes('GIRL')) {
+    return 'Kids';
+  }
   if (
     combined.includes('SHOE') ||
     combined.includes('SNEAKER') ||

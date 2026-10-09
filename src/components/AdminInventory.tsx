@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from '../services/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 
 const STANDARD_SIZES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const KIDS_SIZES = ['K1', 'K2', 'K3', 'K4', 'K5', 'K6', 'K7', 'K8', 'K9', 'K10', 'K11', 'K12', 'K13'];
 
 export const AdminInventory: React.FC = () => {
   const { userRole } = useAuth();
@@ -106,8 +107,13 @@ export const AdminInventory: React.FC = () => {
     const activeSizes = product.sizes && product.sizes.length > 0
       ? [...product.sizes]
       : (product.sizeStock && Object.keys(product.sizeStock).length > 0
-          ? Object.keys(product.sizeStock).sort((a, b) => Number(a) - Number(b))
-          : STANDARD_SIZES);
+          ? Object.keys(product.sizeStock).sort((a, b) => {
+              const numA = Number(a.replace('K', ''));
+              const numB = Number(b.replace('K', ''));
+              if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+              return a.localeCompare(b);
+            })
+          : (product.type === 'Kids' ? KIDS_SIZES : STANDARD_SIZES));
 
     // Initialize size-wise stock from product data
     const sourceStock = product.sizeStock && Object.keys(product.sizeStock).length > 0
@@ -145,7 +151,12 @@ export const AdminInventory: React.FC = () => {
           setStock(computeTotalStock(updated));
           return updated;
         });
-        return [...prev, sz].sort((a, b) => Number(a) - Number(b));
+        return [...prev, sz].sort((a, b) => {
+          const numA = Number(a.replace('K', ''));
+          const numB = Number(b.replace('K', ''));
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return a.localeCompare(b);
+        });
       }
     });
   };
@@ -211,7 +222,7 @@ export const AdminInventory: React.FC = () => {
     const finalDisc = !isNaN(numDisc) ? Math.max(0, Math.round(numDisc * 100) / 100) : 0;
 
     // Build final sizeStock - ensure all selected sizes are present
-    const finalSizes = sizes.length > 0 ? sizes : STANDARD_SIZES;
+    const finalSizes = sizes.length > 0 ? sizes : (productType === 'Kids' ? KIDS_SIZES : STANDARD_SIZES);
     const finalSizeStock: Record<string, number> = {};
     finalSizes.forEach(sz => {
       const rawVal = sizeStockMap[sz];
@@ -873,6 +884,7 @@ export const AdminInventory: React.FC = () => {
                     <option value="Belly">Belly</option>
                     <option value="Formal Shoes">Formal Shoes</option>
                     <option value="Casual">Casual</option>
+                    <option value="Kids">Kids</option>
                   </select>
                 </div>
               </div>
@@ -898,52 +910,57 @@ export const AdminInventory: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setSizes(STANDARD_SIZES);
+                        const activeSizes = productType === 'Kids' ? KIDS_SIZES : STANDARD_SIZES;
+                        setSizes(activeSizes);
                         setSizeStockMap(prev => {
                           const updated = { ...prev };
-                          STANDARD_SIZES.forEach(s => { if (updated[s] === undefined) updated[s] = 0; });
+                          activeSizes.forEach(s => { if (updated[s] === undefined) updated[s] = 0; });
                           setStock(computeTotalStock(updated));
                           return updated;
                         });
                       }}
                       className="text-[#6D5DFB] hover:underline font-bold"
                     >
-                      All (1-12)
+                      All {productType === 'Kids' ? '(K1-K13)' : '(1-12)'}
                     </button>
-                    <span className="text-[#CBD5E1]">·</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const adults = ['6', '7', '8', '9', '10', '11', '12'];
-                        setSizes(adults);
-                        setSizeStockMap(prev => {
-                          const updated: Record<string, number | string> = {};
-                          adults.forEach(s => { updated[s] = prev[s] ?? 0; });
-                          setStock(computeTotalStock(updated));
-                          return updated;
-                        });
-                      }}
-                      className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
-                    >
-                      6-12
-                    </button>
-                    <span className="text-[#CBD5E1]">·</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const kids = ['1', '2', '3', '4', '5'];
-                        setSizes(kids);
-                        setSizeStockMap(prev => {
-                          const updated: Record<string, number | string> = {};
-                          kids.forEach(s => { updated[s] = prev[s] ?? 0; });
-                          setStock(computeTotalStock(updated));
-                          return updated;
-                        });
-                      }}
-                      className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
-                    >
-                      1-5
-                    </button>
+                    {productType !== 'Kids' && (
+                      <>
+                        <span className="text-[#CBD5E1]">·</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const adults = ['6', '7', '8', '9', '10', '11', '12'];
+                            setSizes(adults);
+                            setSizeStockMap(prev => {
+                              const updated: Record<string, number | string> = {};
+                              adults.forEach(s => { updated[s] = prev[s] ?? 0; });
+                              setStock(computeTotalStock(updated));
+                              return updated;
+                            });
+                          }}
+                          className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
+                        >
+                          6-12
+                        </button>
+                        <span className="text-[#CBD5E1]">·</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const kids = ['1', '2', '3', '4', '5'];
+                            setSizes(kids);
+                            setSizeStockMap(prev => {
+                              const updated: Record<string, number | string> = {};
+                              kids.forEach(s => { updated[s] = prev[s] ?? 0; });
+                              setStock(computeTotalStock(updated));
+                              return updated;
+                            });
+                          }}
+                          className="text-[#64748B] hover:text-[#1E1B4B] font-medium"
+                        >
+                          1-5
+                        </button>
+                      </>
+                    )}
                     <span className="text-[#CBD5E1]">·</span>
                     <button
                       type="button"
@@ -959,9 +976,9 @@ export const AdminInventory: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Standard size pills toggle (1 to 12) */}
+                {/* Standard size pills toggle (1 to 12 or K1 to K13) */}
                 <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5 mb-2">
-                  {STANDARD_SIZES.map((sz) => {
+                  {(productType === 'Kids' ? KIDS_SIZES : STANDARD_SIZES).map((sz) => {
                     const isSelected = sizes.includes(sz);
                     return (
                       <button
@@ -981,10 +998,10 @@ export const AdminInventory: React.FC = () => {
                 </div>
 
                 {/* Custom extra sizes if added */}
-                {sizes.filter(sz => !STANDARD_SIZES.includes(sz)).length > 0 && (
+                {sizes.filter(sz => !(productType === 'Kids' ? KIDS_SIZES : STANDARD_SIZES).includes(sz)).length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 mb-2">
                     <span className="text-[11px] text-[#64748B] font-medium mr-1">Custom:</span>
-                    {sizes.filter(sz => !STANDARD_SIZES.includes(sz)).map(sz => (
+                    {sizes.filter(sz => !(productType === 'Kids' ? KIDS_SIZES : STANDARD_SIZES).includes(sz)).map(sz => (
                       <span
                         key={sz}
                         className="inline-flex items-center space-x-1 px-2 py-0.5 bg-[#EEEBFF] text-[#6D5DFB] border border-[#DDD6FE] text-xs rounded-lg font-bold"
