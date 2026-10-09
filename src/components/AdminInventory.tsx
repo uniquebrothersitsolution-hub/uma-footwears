@@ -876,6 +876,7 @@ export const AdminInventory: React.FC = () => {
                     onChange={(e) => setProductType(e.target.value)}
                     className="w-full bg-[#F7F8FC] border border-[#E7E5EF] text-[#1E1B4B] text-xs rounded-xl p-2.5 font-medium focus:outline-none focus:border-[#6D5DFB]"
                   >
+                    <option value="Kids">Kids</option>
                     <option value="Sandals">Sandals</option>
                     <option value="Slippers">Slippers</option>
                     <option value="Shoes">Shoes</option>
@@ -884,7 +885,6 @@ export const AdminInventory: React.FC = () => {
                     <option value="Belly">Belly</option>
                     <option value="Formal Shoes">Formal Shoes</option>
                     <option value="Casual">Casual</option>
-                    <option value="Kids">Kids</option>
                   </select>
                 </div>
               </div>
