@@ -545,10 +545,15 @@ function computeTotalStock(sizeStock: Record<string, number | string>): number {
 
 // Helper: Get stock for a specific size (with fallback)
 function getSizeStockQty(product: Product, size: string): number {
-  if (product.sizeStock && product.sizeStock[size] !== undefined) {
-    return Math.max(0, product.sizeStock[size]);
+  if (product.sizeStock && Object.keys(product.sizeStock).length > 0) {
+    if (product.sizeStock[size] !== undefined) {
+      const val = product.sizeStock[size];
+      return Math.max(0, typeof val === 'number' ? val : (parseInt(String(val), 10) || 0));
+    }
+    // If the product tracks per-size stock, any unlisted size has 0 stock
+    return 0;
   }
-  // Fallback: if no sizeStock, return total stock
+  // Fallback only if no sizeStock is configured at all
   return Math.max(0, product.stock || 0);
 }
 
@@ -640,18 +645,33 @@ export const StorageService = {
   getProducts(): Product[] {
     const data = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     if (!data) {
-      const initialSorted = this.sortProductsByOrder(INITIAL_PRODUCTS);
+      // First-time initialization: assign sizeStock to seed products
+      const initialWithSizeStock = INITIAL_PRODUCTS.map(p => {
+        const sizes = p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10'];
+        const sizeStock = migrateSizeStock({ ...p, sizes });
+        return { ...p, sizes, sizeStock, stock: computeTotalStock(sizeStock) };
+      });
+      const initialSorted = this.sortProductsByOrder(initialWithSizeStock);
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(initialSorted));
       return initialSorted;
     }
     try {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
-        // Return products in their stored order (saveProducts already persists the correct sort order).
-        // Enrich with sizeStock/stock; do NOT re-sort on every read.
+        // CRITICAL: Return products as-is from storage. Do NOT re-run migrateSizeStock()
+        // on every read — that would redistribute stock evenly across sizes and destroy
+        // per-size deductions made by sales. Only initialize sizeStock when completely absent.
         const mapped = parsed.map((p: Product) => {
           const sizes = p.sizes && p.sizes.length > 0 ? p.sizes : ['7', '8', '9', '10'];
-          const sizeStock = migrateSizeStock({ ...p, sizes });
+          let sizeStock: Record<string, number>;
+          if (p.sizeStock && typeof p.sizeStock === 'object' && Object.keys(p.sizeStock).length > 0) {
+            // Preserve existing sizeStock exactly as stored — never redistribute
+            sizeStock = { ...p.sizeStock };
+          } else {
+            // Only migrate when sizeStock is completely absent (legacy/new product)
+            sizeStock = migrateSizeStock({ ...p, sizes });
+          }
+          // Ensure all active sizes have an entry (default to 0 for new sizes)
           sizes.forEach(sz => {
             if (sizeStock[sz] === undefined) sizeStock[sz] = 0;
           });
@@ -823,14 +843,22 @@ export const StorageService = {
       const localProducts = this.getProducts();
       const localMap = new Map<string, Product>();
       localProducts.forEach(p => {
-        if (p.code) localMap.set(p.code, p);
+        if (p.code) {
+          localMap.set(p.code, p);
+          localMap.set(p.code.trim().toUpperCase(), p);
+        }
         if (p.id) localMap.set(p.id, p);
+        if (p.name) localMap.set(p.name.trim().toLowerCase(), p);
       });
 
       const products: Product[] = data.map((row: any) => {
-        const code = row.code || '';
-        const id = row.id || '';
-        const localProd = localMap.get(code) || localMap.get(id);
+        const code = (row.code || '').trim();
+        const id = (row.id || '').trim();
+        const rowName = (row.name || '').trim().toLowerCase();
+        const localProd = localMap.get(code) ||
+          (code ? localMap.get(code.toUpperCase()) : undefined) ||
+          localMap.get(id) ||
+          (rowName ? localMap.get(rowName) : undefined);
 
         const rawSizes = Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['7', '8', '9', '10'];
 
@@ -838,7 +866,7 @@ export const StorageService = {
         // 1. row.size_stock (if present from products table)
         // 2. cloudSizeStockMap by code or id (from SYSTEM_CONFIG)
         // 3. localProd.sizeStock (from local storage)
-        // 4. migrateSizeStock as fallback
+        // 4. migrateSizeStock as fallback only when completely absent
         let resolvedSizeStock: Record<string, number> | undefined;
 
         if (row.size_stock && typeof row.size_stock === 'object' && Object.keys(row.size_stock).length > 0) {
@@ -1570,19 +1598,63 @@ export const StorageService = {
   },
 
   saveTransaction(transaction: SaleTransaction): SaleTransaction[] {
-    const transactions = this.getTransactions();
-    const filtered = transactions.filter(t => t.billNo !== transaction.billNo);
-    const updated = [transaction, ...filtered];
-    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
-    this.emitDataChange();
+    // 1. STRICT ATOMIC STOCK VALIDATION: Fresh read of products to ensure stock is available
+    const freshProducts = this.getProducts();
 
-    // Mark as pending sync locally until confirmed by Supabase
-    this.markBillAsPendingSync(transaction.billNo);
+    // Group items by product and by (product, size) to prevent over-billing across multiple cart lines
+    const productQtyMap = new Map<string, { product: Product; requestedQty: number }>();
+    const sizeQtyMap = new Map<string, { product: Product; size: string; requestedQty: number }>();
 
-    // Deduct stock for sold items locally (size-wise)
-    const products = this.getProducts();
-    const updatedProducts = products.map(p => {
-      const soldItems = transaction.items.filter(i => i.productId === p.id || i.productId === p.code || i.productName === p.name);
+    for (const item of transaction.items) {
+      const prod = freshProducts.find(p =>
+        p.id === item.productId ||
+        p.code === item.productId ||
+        (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+        (item.productName && p.name && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+      );
+      if (!prod) continue;
+
+      const prodKey = prod.code || prod.id;
+      const currentProdQty = productQtyMap.get(prodKey)?.requestedQty || 0;
+      productQtyMap.set(prodKey, { product: prod, requestedQty: currentProdQty + item.quantity });
+
+      const itemSize = item.size || 'Standard';
+      const sizeKey = `${prodKey}__${itemSize}`;
+      const currentSizeQty = sizeQtyMap.get(sizeKey)?.requestedQty || 0;
+      sizeQtyMap.set(sizeKey, { product: prod, size: itemSize, requestedQty: currentSizeQty + item.quantity });
+    }
+
+    // Check size-wise stock
+    for (const { product: prod, size: itemSize, requestedQty } of sizeQtyMap.values()) {
+      if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        const sizeQty = getSizeStockQty(prod, itemSize);
+        if (sizeQty <= 0) {
+          throw new Error(`Cannot complete bill: "${prod.name}" Size ${itemSize} is OUT OF STOCK (0 available).`);
+        }
+        if (requestedQty > sizeQty) {
+          throw new Error(`Cannot complete bill: Requested quantity for "${prod.name}" Size ${itemSize} (${requestedQty}) exceeds available stock (${sizeQty}).`);
+        }
+      }
+    }
+
+    // Check total product stock
+    for (const { product: prod, requestedQty } of productQtyMap.values()) {
+      if (prod.stock <= 0) {
+        throw new Error(`Cannot complete bill: "${prod.name}" is OUT OF STOCK (0 available).`);
+      }
+      if (requestedQty > prod.stock) {
+        throw new Error(`Cannot complete bill: Requested quantity for "${prod.name}" (${requestedQty}) exceeds available inventory (${prod.stock}).`);
+      }
+    }
+
+    // 2. DEDUCT STOCK ATOMICALLY LOCALLY
+    const updatedProducts = freshProducts.map(p => {
+      const soldItems = transaction.items.filter(i =>
+        i.productId === p.id ||
+        i.productId === p.code ||
+        (p.code && i.productId && p.code.toLowerCase() === i.productId.toLowerCase()) ||
+        (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+      );
       if (soldItems.length > 0) {
         const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
         for (const soldItem of soldItems) {
@@ -1590,10 +1662,9 @@ export const StorageService = {
           if (updatedSizeStock[size] !== undefined) {
             updatedSizeStock[size] = Math.max(0, updatedSizeStock[size] - soldItem.quantity);
           } else {
-            // Fallback: if size key doesn't exist, deduct from total (legacy behavior)
+            // Fallback: if size key doesn't exist, deduct from total proportionally
             const totalBefore = computeTotalStock(updatedSizeStock);
             const newTotal = Math.max(0, totalBefore - soldItem.quantity);
-            // Distribute reduction proportionally
             const diff = totalBefore - newTotal;
             let remaining = diff;
             for (const sz of Object.keys(updatedSizeStock)) {
@@ -1611,7 +1682,17 @@ export const StorageService = {
     });
     this.saveProducts(updatedProducts);
 
-    // Asynchronous Cloud Sync
+    // 3. SAVE TRANSACTION TO LOCAL STORAGE ONLY AFTER VALIDATION & DEDUCTION SUCCEEDS
+    const transactions = this.getTransactions();
+    const filtered = transactions.filter(t => t.billNo !== transaction.billNo);
+    const updated = [transaction, ...filtered];
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(updated));
+    this.emitDataChange();
+
+    // Mark as pending sync locally until confirmed by Supabase
+    this.markBillAsPendingSync(transaction.billNo);
+
+    // 4. Asynchronous Cloud Sync
     if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
@@ -1661,7 +1742,7 @@ export const StorageService = {
               localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(withUuid));
             }
 
-            // Get all products to look up codes and brands
+            // Get all products (already deducted locally) to look up codes, brands, and current stock
             const allProducts = this.getProducts();
 
             const lineItems = transaction.items.map(item => {
@@ -1700,36 +1781,58 @@ export const StorageService = {
               if (retryErr) console.error('Cloud line items retry insert error:', retryErr);
             }
 
-            // Decrement stock in Supabase for each sold item
+            // Push locally-deducted stock values to Supabase — DO NOT re-read cloud stock
+            // and deduct again; that causes double deduction. Use the already-deducted local values.
+            const deductedProducts = new Set<string>();
             for (const item of transaction.items) {
               try {
-                const { data: prod } = await client
-                  .from('products')
-                  .select('id, code, stock')
-                  .or(`code.eq.${item.productId},name.eq.${item.productName}`)
-                  .limit(1)
-                  .maybeSingle();
+                // Find the locally-updated product (stock already deducted above)
+                const localProd = allProducts.find(p =>
+                  p.code === item.productId ||
+                  p.id === item.productId ||
+                  (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+                  (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
+                );
+                if (!localProd) continue;
 
-                if (prod) {
-                  const newStock = Math.max(0, (prod.stock || 0) - item.quantity);
-                  const targetCode = prod.code || item.productId;
-                  const localMatch = this.getProducts().find(p => p.id === prod.id || p.code === targetCode || p.name === item.productName);
-                  const updatedSizeStock = localMatch?.sizeStock;
+                // Avoid pushing the same product multiple times (if cart has multiple items from same product)
+                const prodKey = localProd.code || localProd.id;
+                if (deductedProducts.has(prodKey)) continue;
+                deductedProducts.add(prodKey);
 
-                  const updPayload: any = { stock: newStock };
-                  if (updatedSizeStock) updPayload.size_stock = updatedSizeStock;
+                const targetId = toValidUuidOrNull(localProd.id);
+                const updPayload: any = { stock: localProd.stock, updated_at: new Date().toISOString() };
+                if (localProd.sizeStock) updPayload.size_stock = localProd.sizeStock;
 
-                  const { error: updErr } = await client.from('products').update(updPayload).eq('id', prod.id);
-                  if (updErr && updatedSizeStock) {
-                    await client.from('products').update({ stock: newStock }).eq('id', prod.id);
+                let updateQuery = client.from('products').update(updPayload);
+                if (targetId && localProd.code) {
+                  updateQuery = updateQuery.or(`id.eq.${targetId},code.eq.${localProd.code}`);
+                } else if (targetId) {
+                  updateQuery = updateQuery.eq('id', targetId);
+                } else if (localProd.code) {
+                  updateQuery = updateQuery.eq('code', localProd.code);
+                } else {
+                  continue;
+                }
+
+                const { error: updErr } = await updateQuery;
+                if (updErr && localProd.sizeStock) {
+                  let retryQuery = client.from('products').update({ stock: localProd.stock, updated_at: new Date().toISOString() });
+                  if (targetId && localProd.code) {
+                    retryQuery = retryQuery.or(`id.eq.${targetId},code.eq.${localProd.code}`);
+                  } else if (targetId) {
+                    retryQuery = retryQuery.eq('id', targetId);
+                  } else if (localProd.code) {
+                    retryQuery = retryQuery.eq('code', localProd.code);
                   }
+                  await retryQuery;
+                }
 
-                  if (targetCode && updatedSizeStock) {
-                    this.syncProductSizeStockToCloud(targetCode, updatedSizeStock, newStock).catch(() => {});
-                  }
+                if (localProd.code && localProd.sizeStock) {
+                  this.syncProductSizeStockToCloud(localProd.code, localProd.sizeStock, localProd.stock).catch(() => {});
                 }
               } catch (err) {
-                console.error('Stock decrement error:', err);
+                console.error('Stock sync to cloud error:', err);
               }
             }
 
@@ -1846,32 +1949,53 @@ export const StorageService = {
 
       // 4. Restore product stock in Supabase for each deleted item
       if (Array.isArray(target.items) && target.items.length > 0) {
+        const restoredProds = new Set<string>();
+        const allProducts = this.getProducts();
+
         for (const item of target.items) {
           try {
-            const { data: prod } = await client
-              .from('products')
-              .select('id, code, stock')
-              .or(`code.eq.${item.productId},name.eq.${item.productName}`)
-              .limit(1)
-              .maybeSingle();
+            const localMatch = allProducts.find(p =>
+              p.code === item.productId ||
+              p.id === item.productId ||
+              (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+              (item.productName && p.name && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+            );
+            if (!localMatch) continue;
 
-            if (prod) {
-              const restoredStock = (prod.stock || 0) + (item.quantity || 1);
-              const targetCode = prod.code || item.productId;
-              const localMatch = this.getProducts().find(p => p.id === prod.id || p.code === targetCode || p.name === item.productName);
-              const updatedSizeStock = localMatch?.sizeStock;
+            const prodKey = localMatch.code || localMatch.id;
+            if (restoredProds.has(prodKey)) continue;
+            restoredProds.add(prodKey);
 
-              const updPayload: any = { stock: restoredStock };
-              if (updatedSizeStock) updPayload.size_stock = updatedSizeStock;
+            const targetId = toValidUuidOrNull(localMatch.id);
+            const updPayload: any = { stock: localMatch.stock, updated_at: new Date().toISOString() };
+            if (localMatch.sizeStock) updPayload.size_stock = localMatch.sizeStock;
 
-              const { error: updErr } = await client.from('products').update(updPayload).eq('id', prod.id);
-              if (updErr && updatedSizeStock) {
-                await client.from('products').update({ stock: restoredStock }).eq('id', prod.id);
+            let updateQuery = client.from('products').update(updPayload);
+            if (targetId && localMatch.code) {
+              updateQuery = updateQuery.or(`id.eq.${targetId},code.eq.${localMatch.code}`);
+            } else if (targetId) {
+              updateQuery = updateQuery.eq('id', targetId);
+            } else if (localMatch.code) {
+              updateQuery = updateQuery.eq('code', localMatch.code);
+            } else {
+              continue;
+            }
+
+            const { error: updErr } = await updateQuery;
+            if (updErr && localMatch.sizeStock) {
+              let retryQuery = client.from('products').update({ stock: localMatch.stock, updated_at: new Date().toISOString() });
+              if (targetId && localMatch.code) {
+                retryQuery = retryQuery.or(`id.eq.${targetId},code.eq.${localMatch.code}`);
+              } else if (targetId) {
+                retryQuery = retryQuery.eq('id', targetId);
+              } else {
+                retryQuery = retryQuery.eq('code', localMatch.code);
               }
+              await retryQuery;
+            }
 
-              if (targetCode && updatedSizeStock) {
-                this.syncProductSizeStockToCloud(targetCode, updatedSizeStock, restoredStock).catch(() => {});
-              }
+            if (localMatch.code && localMatch.sizeStock) {
+              this.syncProductSizeStockToCloud(localMatch.code, localMatch.sizeStock, localMatch.stock).catch(() => {});
             }
           } catch (stkErr) {
             console.warn('Stock restore in cloud notice:', stkErr);
@@ -1899,17 +2023,22 @@ export const StorageService = {
         const products = this.getProducts();
         let changed = false;
         const updatedProducts = products.map(p => {
-          const soldItem = target.items.find(i =>
+          const matchingItems = target.items.filter(i =>
             i.productId === p.id ||
             i.productId === p.code ||
+            (p.code && i.productId && p.code.toLowerCase() === i.productId.toLowerCase()) ||
             (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
           );
-          if (soldItem) {
+          if (matchingItems.length > 0) {
             changed = true;
             const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
-            const sz = soldItem.size || 'Standard';
-            if (updatedSizeStock[sz] !== undefined) {
-              updatedSizeStock[sz] += (soldItem.quantity || 1);
+            for (const item of matchingItems) {
+              const sz = item.size || 'Standard';
+              if (updatedSizeStock[sz] !== undefined) {
+                updatedSizeStock[sz] += (item.quantity || 1);
+              } else {
+                updatedSizeStock[sz] = (item.quantity || 1);
+              }
             }
             const newTotalStock = computeTotalStock(updatedSizeStock);
             return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };
@@ -1945,17 +2074,22 @@ export const StorageService = {
         const products = this.getProducts();
         let changed = false;
         const updatedProducts = products.map(p => {
-          const soldItem = target.items.find(i =>
+          const matchingItems = target.items.filter(i =>
             i.productId === p.id ||
             i.productId === p.code ||
+            (p.code && i.productId && p.code.toLowerCase() === i.productId.toLowerCase()) ||
             (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
           );
-          if (soldItem) {
+          if (matchingItems.length > 0) {
             changed = true;
             const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
-            const sz = soldItem.size || 'Standard';
-            if (updatedSizeStock[sz] !== undefined) {
-              updatedSizeStock[sz] += (soldItem.quantity || 1);
+            for (const item of matchingItems) {
+              const sz = item.size || 'Standard';
+              if (updatedSizeStock[sz] !== undefined) {
+                updatedSizeStock[sz] += (item.quantity || 1);
+              } else {
+                updatedSizeStock[sz] = (item.quantity || 1);
+              }
             }
             const newTotalStock = computeTotalStock(updatedSizeStock);
             return { ...p, sizeStock: updatedSizeStock, stock: newTotalStock };

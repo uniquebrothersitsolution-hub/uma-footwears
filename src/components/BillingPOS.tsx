@@ -41,6 +41,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const [splitUpiAmount, setSplitUpiAmount] = useState<number | ''>('');
   const [saleSuccessMessage, setSaleSuccessMessage] = useState<string>('');
   const [cartErrorMessage, setCartErrorMessage] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Close code search dropdown on outside click
   useEffect(() => {
@@ -300,85 +301,121 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   const totalPayable = Math.round(cartItems.reduce((acc, item) => acc + item.totalPrice, 0) * 100) / 100;
   const totalDiscount = Math.max(0, Math.round((subtotal - totalPayable) * 100) / 100);
 
+  // Helper to match cart item against product catalog
+  const isCartItemProduct = (item: BillItem, p: Product) => {
+    return (
+      p.id === item.productId ||
+      p.code === item.productId ||
+      (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
+      (item.productName && p.name && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
+    );
+  };
+
   // Submit Transaction & Optionally Print
   const handleCompleteTransaction = (andPrint: boolean = false) => {
-    if (cartItems.length === 0) return;
+    if (cartItems.length === 0 || isSubmitting) return;
     setCartErrorMessage('');
+    setIsSubmitting(true);
 
-    // Strict stock verification across all cart items before saving (size-wise)
-    const freshProducts = StorageService.getProducts();
-    for (const item of cartItems) {
-      const prod = freshProducts.find(p =>
-        p.id === item.productId ||
-        p.code === item.productId ||
-        (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
-        (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
-      );
-      if (prod) {
-        if (prod.stock <= 0) {
-          setCartErrorMessage(`Cannot complete bill: "${item.productName}" is OUT OF STOCK (0 available in inventory). Please remove it from the cart.`);
-          return;
-        }
+    try {
+      // Strict stock verification across all cart items before saving (aggregating multi-line quantities)
+      const freshProducts = StorageService.getProducts();
+      const productQtyMap = new Map<string, { product: Product; requestedQty: number }>();
+      const sizeQtyMap = new Map<string, { product: Product; size: string; requestedQty: number }>();
+
+      for (const item of cartItems) {
+        const prod = freshProducts.find(p => isCartItemProduct(item, p));
+        if (!prod) continue;
+
+        const prodKey = prod.code || prod.id;
+        const curPQty = productQtyMap.get(prodKey)?.requestedQty || 0;
+        productQtyMap.set(prodKey, { product: prod, requestedQty: curPQty + item.quantity });
+
         const itemSize = item.size || 'Standard';
-        const sizeQty = getSizeStockQty(prod, itemSize);
-        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && sizeQty <= 0) {
-          setCartErrorMessage(`Cannot complete bill: "${item.productName}" Size ${itemSize} is OUT OF STOCK. Please remove it from the cart.`);
+        const sizeKey = `${prodKey}__${itemSize}`;
+        const curSQty = sizeQtyMap.get(sizeKey)?.requestedQty || 0;
+        sizeQtyMap.set(sizeKey, { product: prod, size: itemSize, requestedQty: curSQty + item.quantity });
+      }
+
+      // Check per-size stock
+      for (const { product: prod, size: itemSize, requestedQty } of sizeQtyMap.values()) {
+        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+          const sizeQty = getSizeStockQty(prod, itemSize);
+          if (sizeQty <= 0) {
+            setCartErrorMessage(`Cannot complete bill: "${prod.name}" Size ${itemSize} is OUT OF STOCK. Please remove it from the cart.`);
+            setIsSubmitting(false);
+            return;
+          }
+          if (requestedQty > sizeQty) {
+            setCartErrorMessage(
+              `Cannot complete bill: Quantity for "${prod.name}" Size ${itemSize} (${requestedQty}) exceeds available stock (${sizeQty}). Please adjust.`
+            );
+            setIsSubmitting(false);
+            return;
+          }
+        }
+      }
+
+      // Check total product stock
+      for (const { product: prod, requestedQty } of productQtyMap.values()) {
+        if (prod.stock <= 0) {
+          setCartErrorMessage(`Cannot complete bill: "${prod.name}" is OUT OF STOCK (0 available in inventory). Please remove it from the cart.`);
+          setIsSubmitting(false);
           return;
         }
-        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && item.quantity > sizeQty) {
+        if (requestedQty > prod.stock) {
           setCartErrorMessage(
-            `Cannot complete bill: Quantity for "${item.productName}" Size ${itemSize} (${item.quantity}) exceeds available stock (${sizeQty}). Please adjust.`
+            `Cannot complete bill: Total requested quantity for "${prod.name}" (${requestedQty}) exceeds available inventory (${prod.stock}). Please adjust quantity in cart.`
           );
-          return;
-        }
-        if (item.quantity > prod.stock) {
-          setCartErrorMessage(
-            `Cannot complete bill: Quantity for "${item.productName}" (${item.quantity}) exceeds available inventory (${prod.stock}). Please adjust quantity in cart.`
-          );
+          setIsSubmitting(false);
           return;
         }
       }
+
+      const billNo = 'UMA-' + Math.floor(100000 + Math.random() * 900000);
+      const cash = typeof splitCashAmount === 'number' ? splitCashAmount : (parseFloat(String(splitCashAmount)) || 0);
+      const upi = typeof splitUpiAmount === 'number' ? splitUpiAmount : (parseFloat(String(splitUpiAmount)) || 0);
+
+      const transaction: SaleTransaction = {
+        id: 'tx-' + Date.now(),
+        billNo,
+        timestamp: new Date().toISOString(),
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        items: cartItems,
+        subtotal,
+        totalDiscount,
+        finalAmount: totalPayable,
+        paymentMode,
+        splitDetails: paymentMode === 'Split' ? {
+          cash,
+          upi: upi || Math.max(0, totalPayable - cash)
+        } : undefined,
+        staffUsername: username || userRole || 'staff'
+      };
+
+      StorageService.saveTransaction(transaction);
+      setProducts(StorageService.getProducts()); // refresh product list stock
+
+      setSaleSuccessMessage(`Bill #${billNo} saved successfully!`);
+      setTimeout(() => setSaleSuccessMessage(''), 4000);
+
+      if (andPrint) {
+        onPrintBill(transaction);
+      }
+
+      // Reset Cart
+      setCartItems([]);
+      setCustomerName('');
+      setCustomerPhone('');
+      setPaymentMode('Cash');
+      setSplitCashAmount('');
+      setSplitUpiAmount('');
+    } catch (err: any) {
+      setCartErrorMessage(err.message || 'Failed to complete bill: stock error occurred.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const billNo = 'UMA-' + Math.floor(100000 + Math.random() * 900000);
-    const cash = typeof splitCashAmount === 'number' ? splitCashAmount : (parseFloat(String(splitCashAmount)) || 0);
-    const upi = typeof splitUpiAmount === 'number' ? splitUpiAmount : (parseFloat(String(splitUpiAmount)) || 0);
-
-    const transaction: SaleTransaction = {
-      id: 'tx-' + Date.now(),
-      billNo,
-      timestamp: new Date().toISOString(),
-      customerName: customerName.trim() || undefined,
-      customerPhone: customerPhone.trim() || undefined,
-      items: cartItems,
-      subtotal,
-      totalDiscount,
-      finalAmount: totalPayable,
-      paymentMode,
-      splitDetails: paymentMode === 'Split' ? {
-        cash,
-        upi: upi || Math.max(0, totalPayable - cash)
-      } : undefined,
-      staffUsername: username || userRole || 'staff'
-    };
-
-    StorageService.saveTransaction(transaction);
-    setProducts(StorageService.getProducts()); // refresh product list stock
-
-    setSaleSuccessMessage(`Bill #${billNo} saved successfully!`);
-    setTimeout(() => setSaleSuccessMessage(''), 4000);
-
-    if (andPrint) {
-      onPrintBill(transaction);
-    }
-
-    // Reset Cart
-    setCartItems([]);
-    setCustomerName('');
-    setCustomerPhone('');
-    setPaymentMode('Cash');
-    setSplitCashAmount('');
-    setSplitUpiAmount('');
   };
 
   // Active product matching & stock status
@@ -399,23 +436,38 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
   );
   const effectivelyOutOfStock = isOutOfStock || isSelectedSizeOutOfStock;
 
-  // Check if any item currently in cart has insufficient inventory
-  const hasCartStockIssue = cartItems.some(item => {
-    const prod = products.find(p =>
-      p.id === item.productId ||
-      p.code === item.productId ||
-      (p.code && item.productId && p.code.toLowerCase() === item.productId.toLowerCase()) ||
-      (item.productName && p.name.trim().toLowerCase() === item.productName.trim().toLowerCase())
-    );
-    if (!prod) return false;
-    if (prod.stock <= 0) return true;
-    const itemSize = item.size || 'Standard';
-    if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
-      const sizeQty = getSizeStockQty(prod, itemSize);
-      if (sizeQty <= 0 || item.quantity > sizeQty) return true;
+  // Check if any item currently in cart has insufficient inventory (aggregating all items by product & size)
+  const hasCartStockIssue = (() => {
+    if (cartItems.length === 0) return false;
+    const prodQtyMap = new Map<string, { product: Product; requestedQty: number }>();
+    const szQtyMap = new Map<string, { product: Product; size: string; requestedQty: number }>();
+
+    for (const item of cartItems) {
+      const prod = products.find(p => isCartItemProduct(item, p));
+      if (!prod) continue;
+      const key = prod.code || prod.id;
+      const curPQty = prodQtyMap.get(key)?.requestedQty || 0;
+      prodQtyMap.set(key, { product: prod, requestedQty: curPQty + item.quantity });
+
+      const itemSize = item.size || 'Standard';
+      const sKey = `${key}__${itemSize}`;
+      const curSQty = szQtyMap.get(sKey)?.requestedQty || 0;
+      szQtyMap.set(sKey, { product: prod, size: itemSize, requestedQty: curSQty + item.quantity });
     }
-    return item.quantity > prod.stock;
-  });
+
+    for (const { product: prod, size: itemSize, requestedQty } of szQtyMap.values()) {
+      if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        const sizeQty = getSizeStockQty(prod, itemSize);
+        if (sizeQty <= 0 || requestedQty > sizeQty) return true;
+      }
+    }
+
+    for (const { product: prod, requestedQty } of prodQtyMap.values()) {
+      if (prod.stock <= 0 || requestedQty > prod.stock) return true;
+    }
+
+    return false;
+  })();
 
   return (
     <div className="space-y-6">
@@ -1125,19 +1177,19 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleCompleteTransaction(false)}
-                  disabled={cartItems.length === 0 || hasCartStockIssue}
+                  disabled={cartItems.length === 0 || hasCartStockIssue || isSubmitting}
                   className="w-full py-3 px-3 bg-[#F7F8FC] hover:bg-[#EEEBFF] disabled:opacity-50 disabled:cursor-not-allowed text-[#1E1B4B] font-semibold text-xs rounded-xl border border-[#E7E5EF] transition"
                 >
-                  Save Bill Only
+                  {isSubmitting ? 'Saving...' : 'Save Bill Only'}
                 </button>
 
                 <button
                   onClick={() => handleCompleteTransaction(true)}
-                  disabled={cartItems.length === 0 || hasCartStockIssue}
+                  disabled={cartItems.length === 0 || hasCartStockIssue || isSubmitting}
                   className="w-full py-3 px-3 bg-[#22C55E] hover:bg-[#16A34A] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl shadow-sm flex items-center justify-center space-x-1.5 transition active:scale-[0.98]"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Submit & Print</span>
+                  <span>{isSubmitting ? 'Processing...' : 'Submit & Print'}</span>
                 </button>
               </div>
 

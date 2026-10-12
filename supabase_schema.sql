@@ -134,8 +134,23 @@ create or replace function public.process_sale_transaction(
 declare
   v_tx_id uuid;
   item record;
+  v_current_stock integer;
 begin
-  -- 1. Insert Master Transaction Record
+  -- 1. Validate stock availability BEFORE inserting anything
+  for item in select * from jsonb_to_recordset(p_items) as x(
+    productId uuid, productName text, productCode text, brand text, color text, size text,
+    quantity int, price numeric, discountedPrice numeric, totalPrice numeric, wholesalePrice numeric
+  ) loop
+    if item.productId is not null then
+      select stock into v_current_stock from public.products where id = item.productId;
+      if v_current_stock is not null and v_current_stock < item.quantity then
+        raise exception 'Insufficient stock for product % (available: %, requested: %)',
+          item.productName, v_current_stock, item.quantity;
+      end if;
+    end if;
+  end loop;
+
+  -- 2. Insert Master Transaction Record
   insert into public.sales_transactions (
     bill_no, customer_name, customer_phone, payment_mode,
     subtotal, total_discount, final_amount, split_details, staff_username
@@ -144,7 +159,7 @@ begin
     p_subtotal, p_total_discount, p_final_amount, p_split_details, p_staff_username
   ) returning id into v_tx_id;
 
-  -- 2. Insert items and decrement stock atomically
+  -- 3. Insert items and decrement stock atomically
   for item in select * from jsonb_to_recordset(p_items) as x(
     productId uuid, productName text, productCode text, brand text, color text, size text,
     quantity int, price numeric, discountedPrice numeric, totalPrice numeric, wholesalePrice numeric
@@ -160,6 +175,12 @@ begin
     if item.productId is not null then
       update public.products
       set stock = greatest(0, stock - item.quantity),
+          size_stock = case
+            when size_stock is not null and size_stock != '{}'::jsonb and coalesce(item.size, '') != '' then
+              jsonb_set(size_stock, array[item.size],
+                to_jsonb(greatest(0, coalesce((size_stock->>item.size)::int, 0) - item.quantity)))
+            else size_stock
+          end,
           updated_at = now()
       where id = item.productId;
     end if;
@@ -215,9 +236,9 @@ on conflict (code) do update set
   name = excluded.name,
   category = excluded.category,
   price = excluded.price,
-  wholesale_price = excluded.wholesale_price,
-  stock = excluded.stock,
-  sizes = excluded.sizes;
+  wholesale_price = excluded.wholesale_price;
+  -- NOTE: stock and sizes are intentionally NOT updated on conflict
+  -- to prevent seed data from overwriting real inventory changes
 
 -- 8. ROW LEVEL SECURITY (RLS) POLICIES
 -- Enable RLS on all tables
