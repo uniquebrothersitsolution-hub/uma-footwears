@@ -136,17 +136,21 @@ declare
   item record;
   v_current_stock integer;
 begin
-  -- 1. Validate stock availability BEFORE inserting anything
-  for item in select * from jsonb_to_recordset(p_items) as x(
-    productId uuid, productName text, productCode text, brand text, color text, size text,
-    quantity int, price numeric, discountedPrice numeric, totalPrice numeric, wholesalePrice numeric
-  ) loop
-    if item.productId is not null then
-      select stock into v_current_stock from public.products where id = item.productId;
-      if v_current_stock is not null and v_current_stock < item.quantity then
-        raise exception 'Insufficient stock for product % (available: %, requested: %)',
-          item.productName, v_current_stock, item.quantity;
-      end if;
+  -- 1. Validate stock availability BEFORE inserting anything (group by product to prevent multi-line over-billing)
+  for item in 
+    select productId, max(productName) as productName, sum(quantity) as total_qty
+    from jsonb_to_recordset(p_items) as x(
+      productId uuid, productName text, quantity int
+    )
+    where productId is not null
+    group by productId
+  loop
+    select stock into v_current_stock from public.products where id = item.productId;
+    if v_current_stock is not null and v_current_stock <= 0 then
+      raise exception 'Out of stock! This product is unavailable for billing.';
+    elsif v_current_stock is not null and v_current_stock < item.total_qty then
+      raise exception 'Cannot complete bill: Requested quantity for % (%) exceeds available inventory (%).',
+        item.productName, item.total_qty, v_current_stock;
     end if;
   end loop;
 

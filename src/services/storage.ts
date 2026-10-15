@@ -1626,10 +1626,13 @@ export const StorageService = {
 
     // Check size-wise stock
     for (const { product: prod, size: itemSize, requestedQty } of sizeQtyMap.values()) {
-      if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+      if (prod.stock <= 0) {
+        throw new Error("Out of stock! This product is unavailable for billing.");
+      }
+      if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && prod.sizeStock[itemSize] !== undefined) {
         const sizeQty = getSizeStockQty(prod, itemSize);
         if (sizeQty <= 0) {
-          throw new Error(`Cannot complete bill: "${prod.name}" Size ${itemSize} is OUT OF STOCK (0 available).`);
+          throw new Error("Out of stock! This product is unavailable for billing.");
         }
         if (requestedQty > sizeQty) {
           throw new Error(`Cannot complete bill: Requested quantity for "${prod.name}" Size ${itemSize} (${requestedQty}) exceeds available stock (${sizeQty}).`);
@@ -1640,7 +1643,7 @@ export const StorageService = {
     // Check total product stock
     for (const { product: prod, requestedQty } of productQtyMap.values()) {
       if (prod.stock <= 0) {
-        throw new Error(`Cannot complete bill: "${prod.name}" is OUT OF STOCK (0 available).`);
+        throw new Error("Out of stock! This product is unavailable for billing.");
       }
       if (requestedQty > prod.stock) {
         throw new Error(`Cannot complete bill: Requested quantity for "${prod.name}" (${requestedQty}) exceeds available inventory (${prod.stock}).`);
@@ -1656,17 +1659,15 @@ export const StorageService = {
         (i.productName && p.name && i.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
       );
       if (soldItems.length > 0) {
-        const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+        const rawStock = (p.sizeStock && Object.keys(p.sizeStock).length > 0) ? p.sizeStock : migrateSizeStock(p);
+        const updatedSizeStock = { ...rawStock };
         for (const soldItem of soldItems) {
           const size = soldItem.size || 'Standard';
           if (updatedSizeStock[size] !== undefined) {
             updatedSizeStock[size] = Math.max(0, updatedSizeStock[size] - soldItem.quantity);
           } else {
-            // Fallback: if size key doesn't exist, deduct from total proportionally
-            const totalBefore = computeTotalStock(updatedSizeStock);
-            const newTotal = Math.max(0, totalBefore - soldItem.quantity);
-            const diff = totalBefore - newTotal;
-            let remaining = diff;
+            // Fallback: if size key doesn't exist, deduct from available sizes with stock
+            let remaining = soldItem.quantity;
             for (const sz of Object.keys(updatedSizeStock)) {
               if (remaining <= 0) break;
               const deduct = Math.min(updatedSizeStock[sz], remaining);
@@ -2031,7 +2032,8 @@ export const StorageService = {
           );
           if (matchingItems.length > 0) {
             changed = true;
-            const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+            const rawStock = (p.sizeStock && Object.keys(p.sizeStock).length > 0) ? p.sizeStock : migrateSizeStock(p);
+            const updatedSizeStock = { ...rawStock };
             for (const item of matchingItems) {
               const sz = item.size || 'Standard';
               if (updatedSizeStock[sz] !== undefined) {
@@ -2082,7 +2084,8 @@ export const StorageService = {
           );
           if (matchingItems.length > 0) {
             changed = true;
-            const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+            const rawStock = (p.sizeStock && Object.keys(p.sizeStock).length > 0) ? p.sizeStock : migrateSizeStock(p);
+            const updatedSizeStock = { ...rawStock };
             for (const item of matchingItems) {
               const sz = item.size || 'Standard';
               if (updatedSizeStock[sz] !== undefined) {
@@ -2162,7 +2165,8 @@ export const StorageService = {
         (removedItem.productName && p.name && removedItem.productName.trim().toLowerCase() === p.name.trim().toLowerCase())
       ) {
         prodsChanged = true;
-        const updatedSizeStock = { ...(p.sizeStock || migrateSizeStock(p)) };
+        const rawStock = (p.sizeStock && Object.keys(p.sizeStock).length > 0) ? p.sizeStock : migrateSizeStock(p);
+        const updatedSizeStock = { ...rawStock };
         const sz = removedItem.size || 'Standard';
         if (updatedSizeStock[sz] !== undefined) {
           updatedSizeStock[sz] += (removedItem.quantity || 1);

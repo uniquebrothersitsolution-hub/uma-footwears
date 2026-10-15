@@ -85,7 +85,22 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     setProductNameInput(prod.name);
     const sizes = prod.sizes && prod.sizes.length > 0 ? prod.sizes : DEFAULT_SIZES;
     setAvailableSizes(sizes);
-    setSelectedSize('');
+    
+    // Auto-select size if only one size has stock, or if product only defines 1 size
+    const sizesWithStock = sizes.filter(sz => {
+      if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        return (prod.sizeStock[sz] || 0) > 0;
+      }
+      return prod.stock > 0;
+    });
+    if (sizesWithStock.length === 1) {
+      setSelectedSize(sizesWithStock[0]);
+    } else if (sizes.length === 1) {
+      setSelectedSize(sizes[0]);
+    } else {
+      setSelectedSize('');
+    }
+
     setBasePrice(prod.price);
     setWholesalePrice(prod.wholesalePrice || 0);
     setDiscountPercent(prod.discountPercent || 0);
@@ -96,7 +111,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     setDiscountedPrice(Math.round(netPrice * 100) / 100);
 
     if (prod.stock <= 0) {
-      setCartErrorMessage(`Notice: "${prod.name}" is completely OUT OF STOCK (0 available in any size). It cannot be billed.`);
+      setCartErrorMessage("Out of stock! This product is unavailable for billing.");
     }
   };
 
@@ -207,30 +222,48 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       (p.code && p.code.trim().toLowerCase() === productNameInput.trim().toLowerCase())
     );
 
-    // STRICT STOCK CHECK: Cannot bill if out of stock (size-wise)
+    // STRICT STOCK CHECK: Cannot bill if out of stock
+    let resolvedChosenSize = selectedSize.trim();
     if (prod) {
-      const chosenSz = selectedSize.trim() || 'Standard';
-      const sizeQty = getSizeStockQty(prod, chosenSz);
-      
       if (prod.stock <= 0) {
-        setCartErrorMessage(`Cannot bill "${prod.name}" — This product is completely OUT OF STOCK (0 pairs available in any size).`);
+        setCartErrorMessage("Out of stock! This product is unavailable for billing.");
         return;
       }
 
-      if (sizeQty <= 0 && prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
-        setCartErrorMessage(`Cannot bill "${prod.name}" in Size ${chosenSz} — This size is OUT OF STOCK (0 pairs available). Other sizes may still be available.`);
+      // If no size was explicitly chosen, pick an available size with stock > 0
+      if (!resolvedChosenSize && prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        const firstWithStock = Object.keys(prod.sizeStock).find(sz => (prod.sizeStock?.[sz] || 0) > 0);
+        if (firstWithStock) {
+          resolvedChosenSize = firstWithStock;
+        } else if (prod.sizes && prod.sizes.length > 0) {
+          resolvedChosenSize = prod.sizes[0];
+        }
+      } else if (!resolvedChosenSize && prod.sizes && prod.sizes.length > 0) {
+        resolvedChosenSize = prod.sizes[0];
+      }
+      if (!resolvedChosenSize) {
+        resolvedChosenSize = 'Standard';
+      }
+
+      const hasTrackedSize = Boolean(prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && prod.sizeStock[resolvedChosenSize] !== undefined);
+      const sizeQty = hasTrackedSize ? getSizeStockQty(prod, resolvedChosenSize) : prod.stock;
+
+      if (hasTrackedSize && sizeQty <= 0) {
+        setCartErrorMessage("Out of stock! This product is unavailable for billing.");
         return;
       }
 
       // Check how many of this product + this size are already in cart
       const alreadyInCartQty = cartItems
-        .filter(i => (i.productId === prod.code || (prod.name && i.productName.toLowerCase() === prod.name.toLowerCase())) && i.size === chosenSz)
+        .filter(i => (i.productId === prod.code || (prod.name && i.productName.toLowerCase() === prod.name.toLowerCase())) && i.size === resolvedChosenSize)
         .reduce((sum, i) => sum + i.quantity, 0);
 
-      if ((alreadyInCartQty + quantity) > sizeQty && prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+      if (hasTrackedSize && (alreadyInCartQty + quantity) > sizeQty) {
         const remaining = Math.max(0, sizeQty - alreadyInCartQty);
         setCartErrorMessage(
-          `Cannot bill ${quantity} pair(s) of "${prod.name}" Size ${chosenSz}. Available stock for Size ${chosenSz} is ${sizeQty}${alreadyInCartQty > 0 ? ` (${alreadyInCartQty} already in cart, only ${remaining} more can be added)` : ''}.`
+          remaining === 0
+            ? "Out of stock! This product is unavailable for billing."
+            : `Cannot bill ${quantity} pair(s) of "${prod.name}" Size ${resolvedChosenSize}. Available stock for Size ${resolvedChosenSize} is ${sizeQty}${alreadyInCartQty > 0 ? ` (${alreadyInCartQty} already in cart, only ${remaining} more can be added)` : ''}.`
         );
         return;
       }
@@ -243,7 +276,9 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       if ((totalAlreadyInCart + quantity) > prod.stock) {
         const remaining = Math.max(0, prod.stock - totalAlreadyInCart);
         setCartErrorMessage(
-          `Cannot bill ${quantity} pair(s) of "${prod.name}". Total available stock is ${prod.stock}${totalAlreadyInCart > 0 ? ` (${totalAlreadyInCart} already in cart, only ${remaining} more can be added)` : ''}.`
+          remaining === 0
+            ? "Out of stock! This product is unavailable for billing."
+            : `Cannot bill ${quantity} pair(s) of "${prod.name}". Total available stock is ${prod.stock}${totalAlreadyInCart > 0 ? ` (${totalAlreadyInCart} already in cart, only ${remaining} more can be added)` : ''}.`
         );
         return;
       }
@@ -254,7 +289,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       ? numWholesale
       : (prod?.wholesalePrice || Math.round(numBasePrice * 0.6 * 100) / 100);
 
-    const chosenSize = selectedSize.trim() || 'Standard';
+    const chosenSize = resolvedChosenSize || 'Standard';
     const chosenBrand = prod?.category || (productNameInput.trim().split(' ')[0] || '');
     const chosenType = prod?.type || deriveFootwearType(undefined, prod || { name: productNameInput, category: chosenBrand });
     const chosenCode = prod?.code || selectedProductId || 'custom-' + Date.now();
@@ -339,10 +374,15 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
 
       // Check per-size stock
       for (const { product: prod, size: itemSize, requestedQty } of sizeQtyMap.values()) {
-        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0) {
+        if (prod.stock <= 0) {
+          setCartErrorMessage("Out of stock! This product is unavailable for billing.");
+          setIsSubmitting(false);
+          return;
+        }
+        if (prod.sizeStock && Object.keys(prod.sizeStock).length > 0 && prod.sizeStock[itemSize] !== undefined) {
           const sizeQty = getSizeStockQty(prod, itemSize);
           if (sizeQty <= 0) {
-            setCartErrorMessage(`Cannot complete bill: "${prod.name}" Size ${itemSize} is OUT OF STOCK. Please remove it from the cart.`);
+            setCartErrorMessage("Out of stock! This product is unavailable for billing.");
             setIsSubmitting(false);
             return;
           }
@@ -359,7 +399,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       // Check total product stock
       for (const { product: prod, requestedQty } of productQtyMap.values()) {
         if (prod.stock <= 0) {
-          setCartErrorMessage(`Cannot complete bill: "${prod.name}" is OUT OF STOCK (0 available in inventory). Please remove it from the cart.`);
+          setCartErrorMessage("Out of stock! This product is unavailable for billing.");
           setIsSubmitting(false);
           return;
         }
@@ -412,7 +452,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
       setSplitCashAmount('');
       setSplitUpiAmount('');
     } catch (err: any) {
-      setCartErrorMessage(err.message || 'Failed to complete bill: stock error occurred.');
+      setCartErrorMessage(err.message || 'Out of stock! This product is unavailable for billing.');
     } finally {
       setIsSubmitting(false);
     }
@@ -432,6 +472,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
     selectedSize.trim() && 
     activeProduct.sizeStock && 
     Object.keys(activeProduct.sizeStock).length > 0 &&
+    activeProduct.sizeStock[selectedSize.trim()] !== undefined &&
     getSizeStockQty(activeProduct, selectedSize.trim()) <= 0
   );
   const effectivelyOutOfStock = isOutOfStock || isSelectedSizeOutOfStock;
@@ -664,15 +705,10 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                   }`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-1.5 font-semibold">
-                        {isOutOfStock ? (
+                        {isOutOfStock || isSelectedSizeOutOfStock ? (
                           <>
                             <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                            <span>OUT OF STOCK: 0 available in any size — Cannot bill!</span>
-                          </>
-                        ) : isSelectedSizeOutOfStock ? (
-                          <>
-                            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                            <span>Size {selectedSize} is OUT OF STOCK — Pick a different size!</span>
+                            <span>Out of stock! This product is unavailable for billing.</span>
                           </>
                         ) : (
                           <>
@@ -687,7 +723,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                       </div>
                       {isOutOfStock || isSelectedSizeOutOfStock ? (
                         <span className="text-[10px] bg-red-200 text-red-900 font-extrabold px-2 py-0.5 rounded-full uppercase">
-                          {isOutOfStock ? 'Stock Empty' : `Size ${selectedSize} Empty`}
+                          Out of stock
                         </span>
                       ) : (
                         <span className="text-[10px] text-[#64748B] font-mono">
@@ -907,7 +943,7 @@ export const BillingPOS: React.FC<BillingPOSProps> = ({ onPrintBill }) => {
                     {effectivelyOutOfStock ? (
                       <>
                         <AlertTriangle className="w-5 h-5 text-red-500" />
-                        <span>{isSelectedSizeOutOfStock ? `Size ${selectedSize} Out of Stock` : 'Out of Stock — Cannot Bill'}</span>
+                        <span>Out of stock! This product is unavailable for billing.</span>
                       </>
                     ) : (
                       <>
